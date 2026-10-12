@@ -91,8 +91,9 @@ policy. It intentionally rejects a rough policy because the native runner does
 not reproduce mjlab's terrain height scan.
 
 The same runner recognizes the tuned task's ONNX metadata and reproduces its
-joint-axis conversion, command deadzone, and action clipping. It does not run a
-safety filter:
+joint-axis conversion and action clipping. The source task does not zero small
+sampled commands, so this port does not add a command deadzone. It does not run
+a safety filter:
 
 .. code-block:: bash
 

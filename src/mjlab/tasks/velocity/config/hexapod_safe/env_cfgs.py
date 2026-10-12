@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from mjlab.actuator import BuiltinPositionActuatorCfg
 from mjlab.asset_zoo.robots.hexapod_tethered.hexapod_constants import (
   FOOT_GEOM_NAMES,
@@ -23,12 +25,12 @@ from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg
 from mjlab.tasks.velocity import mdp
+from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 from mjlab.tasks.velocity.velocity_env_cfg import make_velocity_env_cfg
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 
 from . import observations, rewards
 from .actions import SignedJointPositionActionCfg
-from .commands import El4090VelocityCommandCfg
 from .events import set_planar_push_velocity
 
 EL4090_ACTION_SCALE = 0.25
@@ -306,7 +308,7 @@ def hexapod_safe_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     )
   }
   cfg.commands = {
-    "twist": El4090VelocityCommandCfg(
+    "twist": UniformVelocityCommandCfg(
       entity_name="robot",
       resampling_time_range=(4.0, 4.0),
       rel_standing_envs=0.0,
@@ -314,7 +316,7 @@ def hexapod_safe_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
       rel_world_envs=0.0,
       rel_forward_envs=0.0,
       heading_command=False,
-      ranges=El4090VelocityCommandCfg.Ranges(
+      ranges=UniformVelocityCommandCfg.Ranges(
         lin_vel_x=(-1.5, 1.5),
         lin_vel_y=(-1.0, 1.0),
         ang_vel_z=(-1.5, 1.5),
@@ -348,11 +350,12 @@ def hexapod_safe_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
         ),
       },
     ),
-    "foot_friction": EventTermCfg(
+    "robot_friction": EventTermCfg(
       func=envs_mdp.dr.geom_friction,
       mode="startup",
       params={
-        "asset_cfg": SceneEntityCfg("robot", geom_names=FOOT_GEOM_NAMES),
+        # Isaac Gym assigns the randomized bucket to every rigid shape.
+        "asset_cfg": SceneEntityCfg("robot", geom_names=(r".*_collision\d*",)),
         "operation": "abs",
         "ranges": (0.3, 1.25),
         "shared_random": True,
@@ -375,7 +378,15 @@ def hexapod_safe_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     ),
   }
   cfg.rewards = _el4090_rewards()
-  cfg.terminations = {"time_out": TerminationTermCfg(func=mdp.time_out, time_out=True)}
+  cfg.terminations = {
+    "time_out": TerminationTermCfg(func=mdp.time_out, time_out=True),
+    # The source terminates when projected_gravity[:, 2] > 0: the body has
+    # rotated by more than 90 degrees from upright.
+    "fell_over": TerminationTermCfg(
+      func=mdp.bad_orientation,
+      params={"limit_angle": math.pi / 2.0},
+    ),
+  }
   cfg.curriculum = {}
   cfg.metrics = {}
   cfg.decimation = 4

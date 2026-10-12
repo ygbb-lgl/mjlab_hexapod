@@ -21,6 +21,8 @@ os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")
 import onnxruntime as ort
 import tyro
 
+import mjlab
+
 
 @dataclass(frozen=True)
 class Sim2SimCfg:
@@ -325,7 +327,7 @@ def run(cfg: Sim2SimCfg) -> None:
 
 
 def main() -> None:
-  run(tyro.cli(Sim2SimCfg))
+  run(tyro.cli(Sim2SimCfg, config=mjlab.TYRO_FLAGS))
 
 
 if __name__ == "__main__":

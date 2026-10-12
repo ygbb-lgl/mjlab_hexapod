@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from weakref import WeakKeyDictionary
 
 import torch
 
@@ -131,55 +132,102 @@ def base_height(
   return torch.square(robot.data.root_link_pos_w[:, 2] - target)
 
 
-class feet_slip:
-  """Foot slip with the source task's one-step contact filter."""
+def feet_slip(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+  foot_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+  """Foot slip using the source task's effective runtime contact mask.
+
+  The source reward loader orders terms alphabetically. ``feet_air_time`` thus
+  updates ``last_contacts`` immediately before this reward is evaluated, making
+  its documented one-step filter equivalent to the current contact mask.
+  """
+  sensor: ContactSensor = env.scene[sensor_name]
+  force = sensor.data.force
+  if force is None:
+    raise RuntimeError("feet_slip requires contact force data")
+  contact = force[:, :, 2] > 1.0
+  robot: Entity = env.scene[foot_cfg.name]
+  velocity_xy = robot.data.body_link_lin_vel_w[:, foot_cfg.body_ids, :2]
+  speed_squared = torch.square(torch.norm(velocity_xy, dim=2))
+  return torch.sum(contact * speed_squared, dim=1)
+
+
+class _SourceContactTiming:
+  """Shared EL-4090 contact timers driven by vertical force thresholding."""
+
+  def __init__(self, env: ManagerBasedRlEnv, sensor: ContactSensor):
+    shape = (env.num_envs, len(sensor.primary_names))
+    self.last_contacts = torch.zeros(shape, device=env.device, dtype=torch.bool)
+    self.air_time = torch.zeros(shape, device=env.device)
+    self.contact_time = torch.zeros(shape, device=env.device)
+
+  def update(
+    self,
+    sensor: ContactSensor,
+    step_dt: float,
+  ) -> tuple[torch.Tensor, torch.Tensor]:
+    force = sensor.data.force
+    if force is None:
+      raise RuntimeError("feet_air_time requires contact force data")
+    contact = force[:, :, 2] > 1.0
+    filtered_contact = contact | self.last_contacts
+    self.last_contacts[:] = contact
+    first_contact = (self.air_time > 0.0) & filtered_contact
+    self.air_time += step_dt
+    self.contact_time += step_dt
+    landing_air_time = self.air_time.clone()
+    self.air_time *= ~filtered_contact
+    self.contact_time *= filtered_contact
+    return landing_air_time, first_contact
+
+  def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
+    if env_ids is None:
+      env_ids = slice(None)
+    self.last_contacts[env_ids] = False
+    self.air_time[env_ids] = 0.0
+    self.contact_time[env_ids] = 0.0
+
+
+_SOURCE_CONTACT_TIMINGS: WeakKeyDictionary[ContactSensor, _SourceContactTiming] = (
+  WeakKeyDictionary()
+)
+
+
+def _source_contact_timing(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+) -> tuple[ContactSensor, _SourceContactTiming]:
+  sensor: ContactSensor = env.scene[sensor_name]
+  state = _SOURCE_CONTACT_TIMINGS.get(sensor)
+  if state is None:
+    state = _SourceContactTiming(env, sensor)
+    _SOURCE_CONTACT_TIMINGS[sensor] = state
+  return sensor, state
+
+
+class feet_air_time:
+  """Source-exact EL-4090 landing reward and shared gait timer update."""
 
   def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
-    sensor: ContactSensor = env.scene[cfg.params["sensor_name"]]
-    self._last_contacts = torch.zeros(
-      (env.num_envs, len(sensor.primary_names)),
-      device=env.device,
-      dtype=torch.bool,
-    )
+    _, self._timing = _source_contact_timing(env, cfg.params["sensor_name"])
 
   def __call__(
     self,
     env: ManagerBasedRlEnv,
     sensor_name: str,
-    foot_cfg: SceneEntityCfg,
+    command_name: str,
+    threshold: float = 0.5,
   ) -> torch.Tensor:
     sensor: ContactSensor = env.scene[sensor_name]
-    force = sensor.data.force
-    if force is None:
-      raise RuntimeError("feet_slip requires contact force data")
-    contact = force[:, :, 2] > 1.0
-    filtered_contact = contact | self._last_contacts
-    self._last_contacts[:] = contact
-    robot: Entity = env.scene[foot_cfg.name]
-    velocity_xy = robot.data.body_link_lin_vel_w[:, foot_cfg.body_ids, :2]
-    speed_squared = torch.square(torch.norm(velocity_xy, dim=2))
-    return torch.sum(filtered_contact * speed_squared, dim=1)
+    landing_air_time, first_contact = self._timing.update(sensor, env.step_dt)
+    reward = torch.sum((landing_air_time - threshold) * first_contact, dim=1)
+    moving = torch.norm(_command(env, command_name)[:, :2], dim=1) > 0.1
+    return reward * moving
 
   def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
-    if env_ids is None:
-      env_ids = slice(None)
-    self._last_contacts[env_ids] = False
-
-
-def feet_air_time(
-  env: ManagerBasedRlEnv,
-  sensor_name: str,
-  command_name: str,
-  threshold: float = 0.5,
-) -> torch.Tensor:
-  sensor: ContactSensor = env.scene[sensor_name]
-  last_air_time = sensor.data.last_air_time
-  if last_air_time is None:
-    raise RuntimeError("feet_air_time requires air-time tracking")
-  first_contact = sensor.compute_first_contact(env.step_dt)
-  reward = torch.sum((last_air_time - threshold) * first_contact, dim=1)
-  moving = torch.norm(_command(env, command_name)[:, :2], dim=1) > 0.1
-  return reward * moving
+    self._timing.reset(env_ids)
 
 
 def collision(env: ManagerBasedRlEnv, sensor_name: str) -> torch.Tensor:
@@ -291,7 +339,7 @@ def shank_vertical(
 
 class _gait_timing:
   def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
-    sensor: ContactSensor = env.scene[cfg.params["sensor_name"]]
+    sensor, self._source_timing = _source_contact_timing(env, cfg.params["sensor_name"])
     names = sensor.primary_names
     leg_to_index = {name.split("_")[0]: index for index, name in enumerate(names)}
     self._group_1 = tuple(leg_to_index[name] for name in ("LF", "LB", "RM"))
@@ -320,14 +368,6 @@ class _gait_timing:
     return first_error.clamp(max=4.0) + second_error.clamp(max=4.0)
 
   @staticmethod
-  def _timing(sensor: ContactSensor) -> tuple[torch.Tensor, torch.Tensor]:
-    air_time = sensor.data.current_air_time
-    contact_time = sensor.data.current_contact_time
-    if air_time is None or contact_time is None:
-      raise RuntimeError("gait timing requires air-time tracking")
-    return air_time, contact_time
-
-  @staticmethod
   def _moving(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
     command = _command(env, command_name)
     return (torch.norm(command[:, :2], dim=1) > 0.1) | (torch.abs(command[:, 2]) > 0.1)
@@ -343,8 +383,9 @@ class feet_sync(_gait_timing):
     sensor_name: str,
     command_name: str,
   ) -> torch.Tensor:
-    sensor: ContactSensor = env.scene[sensor_name]
-    air_time, contact_time = self._timing(sensor)
+    del sensor_name
+    air_time = self._source_timing.air_time
+    contact_time = self._source_timing.contact_time
     result = torch.zeros(env.num_envs, device=env.device)
     for group in (self._group_1, self._group_2):
       for first, second in (
@@ -363,8 +404,9 @@ class feet_async(_gait_timing):
     sensor_name: str,
     command_name: str,
   ) -> torch.Tensor:
-    sensor: ContactSensor = env.scene[sensor_name]
-    air_time, contact_time = self._timing(sensor)
+    del sensor_name
+    air_time = self._source_timing.air_time
+    contact_time = self._source_timing.contact_time
     result = torch.zeros(env.num_envs, device=env.device)
     for first in self._group_1:
       for second in self._group_2:
