@@ -18,6 +18,7 @@ from mjlab.utils.lab_api.string import string_to_callable
 ENTITY_ALIASES: dict[str, str] = {
   "g1": "mjlab.asset_zoo.robots:get_g1_robot_cfg",
   "go1": "mjlab.asset_zoo.robots:get_go1_robot_cfg",
+  "hexapod": "mjlab.asset_zoo.robots:get_hexapod_robot_cfg",
   "yam": "mjlab.asset_zoo.robots:get_yam_robot_cfg",
 }
 
@@ -25,7 +26,7 @@ ENTITY_ALIASES: dict[str, str] = {
 @dataclass
 class ExportSceneCfg:
   target: tyro.conf.Positional[str]
-  """Task ID, entity alias (g1, go1, yam), or import path (pkg.module:get_cfg)."""
+  """Task ID, entity alias (g1, go1, hexapod, yam), or an import path."""
 
   output_dir: str = "export"
   """Output directory."""

@@ -1,5 +1,7 @@
 """Shared utilities for ONNX policy export across RL tasks."""
 
+from typing import cast
+
 import onnx
 import torch
 
@@ -87,7 +89,7 @@ def get_base_metadata(
     observation_term_flatten_history_dim.append(cfg.flatten_history_dim)
     observation_term_history_length.append(cfg.history_length)
 
-  return {
+  metadata: dict[str, list | str | float] = {
     "run_path": run_path,
     "joint_names": list(robot.joint_names),
     "joint_stiffness": joint_stiffness.tolist(),
@@ -103,6 +105,15 @@ def get_base_metadata(
     if isinstance(joint_action._scale, torch.Tensor)
     else joint_action._scale,
   }
+  get_export_metadata = getattr(joint_action, "get_export_metadata", None)
+  if callable(get_export_metadata):
+    metadata.update(cast(dict[str, list | str | float], get_export_metadata()))
+  for command_name in env.command_manager.active_terms:
+    command = env.command_manager.get_term(command_name)
+    get_export_metadata = getattr(command, "get_export_metadata", None)
+    if callable(get_export_metadata):
+      metadata.update(cast(dict[str, list | str | float], get_export_metadata()))
+  return metadata
 
 
 def attach_metadata_to_onnx(

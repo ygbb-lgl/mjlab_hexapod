@@ -8,6 +8,11 @@ Upcoming version (not yet released)
 Added
 ^^^^^
 
+- Added native mjlab flat- and rough-terrain velocity tasks, robot assets, and a
+  native-MuJoCo ONNX sim2sim runner for the tethered hexapod. This also includes
+  an EL-4090-derived ordinary PPO task with its tuned parameters, rewards,
+  joint-axis conversion, symmetry augmentation, and 66-dimensional observation.
+
 - Added ``SimulationCfg.graph_conditional`` to toggle MuJoCo Warp's CUDA graph
   conditional nodes, which require CUDA 12.4 or newer.
 
