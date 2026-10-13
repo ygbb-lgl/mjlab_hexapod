@@ -1,4 +1,4 @@
-"""Tests for the tethered hexapod asset."""
+"""Model-level checks for the crab-style hexapod asset."""
 
 import re
 from pathlib import Path
@@ -7,7 +7,7 @@ import mujoco
 import numpy as np
 import pytest
 
-from mjlab.asset_zoo.robots.hexapod_tethered import hexapod_constants
+from mjlab.asset_zoo.robots.hexapod import hexapod_constants
 from mjlab.entity import Entity
 from mjlab.scene import Scene, SceneCfg
 from mjlab.utils.string import resolve_expr
@@ -23,76 +23,67 @@ def hexapod_model(hexapod_entity: Entity) -> mujoco.MjModel:
   return hexapod_entity.spec.compile()
 
 
-def test_hexapod_entity_creation(hexapod_entity: Entity) -> None:
-  assert hexapod_entity.num_actuators == 18
-  assert hexapod_entity.num_joints == 18
-  assert hexapod_entity.is_actuated
-  assert not hexapod_entity.is_fixed_base
-  assert tuple(hexapod_entity.joint_names) == hexapod_constants.JOINT_NAMES
-
-
-def test_safe_joint_signs_cover_playground_order() -> None:
-  assert len(hexapod_constants.SAFE_JOINT_SIGNS) == len(hexapod_constants.JOINT_NAMES)
-  negative_joints = {
-    name
-    for name, sign in zip(
-      hexapod_constants.JOINT_NAMES,
-      hexapod_constants.SAFE_JOINT_SIGNS,
-      strict=True,
-    )
-    if sign < 0
-  }
-  assert negative_joints == {
-    "RF_HFE",
-    "RF_KFE",
-    "RM_HFE",
-    "RM_KFE",
-    "RB_HFE",
-    "LF_HAA",
-    "LM_HAA",
-    "LB_HAA",
-    "LB_KFE",
-  }
-
-
-def test_actuator_parameters(hexapod_model: mujoco.MjModel) -> None:
-  cfg = hexapod_constants.HEXAPOD_LEG_ACTUATOR_CFG
-  effort_limit = cfg.effort_limit
-  assert effort_limit is not None
-  for actuator_id in range(hexapod_model.nu):
-    actuator = hexapod_model.actuator(actuator_id)
-    assert actuator.gainprm[0] == cfg.stiffness
-    assert actuator.biasprm[1] == -cfg.stiffness
-    assert actuator.biasprm[2] == -cfg.damping
-    assert actuator.forcerange[0] == -effort_limit
-    assert actuator.forcerange[1] == effort_limit
-
-
-def test_keyframe_joint_positions(
+def test_joint_order_and_xml_axis_signs(
   hexapod_entity: Entity,
   hexapod_model: mujoco.MjModel,
 ) -> None:
-  key = hexapod_model.key("init_state")
-  expected_joint_pos = hexapod_constants.INIT_STATE.joint_pos
-  assert expected_joint_pos is not None
-  expected_values = resolve_expr(expected_joint_pos, hexapod_entity.joint_names, 0.0)
-  for joint_name, expected_value in zip(
-    hexapod_entity.joint_names,
-    expected_values,
-    strict=True,
-  ):
-    qpos_idx = hexapod_model.joint(joint_name).qposadr[0]
-    np.testing.assert_allclose(key.qpos[qpos_idx], expected_value)
+  assert hexapod_entity.num_joints == 18
+  assert hexapod_entity.num_actuators == 18
+  assert tuple(hexapod_entity.joint_names) == hexapod_constants.JOINT_NAMES
+
+  for name, expected_sign in hexapod_constants.JOINT_AXIS_SIGNS.items():
+    np.testing.assert_allclose(
+      hexapod_model.joint(name).axis,
+      (0.0, 0.0, float(expected_sign)),
+    )
 
 
-def test_keyframe_starts_without_floor_penetration(
+def test_actuator_pd_and_soft_joint_limits(hexapod_model: mujoco.MjModel) -> None:
+  assert isinstance(hexapod_constants.STIFFNESS_HAA, float)
+  assert isinstance(hexapod_constants.STIFFNESS_HFE, float)
+  assert isinstance(hexapod_constants.STIFFNESS_KFE, float)
+  for actuator_id in range(hexapod_model.nu):
+    actuator = hexapod_model.actuator(actuator_id)
+    assert actuator.gainprm[0] == 100.0
+    assert actuator.biasprm[1] == -100.0
+    assert actuator.biasprm[2] == -3.0
+    np.testing.assert_allclose(actuator.forcerange, (-90.0, 90.0))
+
+  for name in hexapod_constants.JOINT_NAMES:
+    expected = (-0.8, 0.8) if name.endswith("HAA") else (-0.6, 0.6)
+    np.testing.assert_allclose(hexapod_model.joint(name).range, expected)
+
+  assert hexapod_constants.HEXAPOD_ACTION_SCALE == {
+    r".*_HAA": pytest.approx(0.225),
+    r".*_HFE": pytest.approx(0.225),
+    r".*_KFE": pytest.approx(0.225),
+  }
+
+
+def test_initial_pose_places_all_feet_on_the_floor(
+  hexapod_entity: Entity,
   hexapod_model: mujoco.MjModel,
 ) -> None:
   data = mujoco.MjData(hexapod_model)
   mujoco.mj_resetDataKeyframe(hexapod_model, data, 0)
   mujoco.mj_forward(hexapod_model, data)
-  for site_name in hexapod_constants.FOOT_SITE_NAMES:
-    assert data.site(site_name).xpos[2] >= 0.023
+
+  heights = np.array(
+    [data.site(name).xpos[2] for name in hexapod_constants.FOOT_SITE_NAMES]
+  )
+  np.testing.assert_allclose(heights, 0.023, atol=5.0e-4)
+  assert hexapod_model.body_subtreemass[0] == pytest.approx(39.9407774)
+
+  expected = resolve_expr(
+    hexapod_constants.INIT_JOINT_POS,
+    hexapod_entity.joint_names,
+    0.0,
+  )
+  actual = [
+    data.qpos[hexapod_model.joint(name).qposadr[0]]
+    for name in hexapod_constants.JOINT_NAMES
+  ]
+  np.testing.assert_allclose(actual, expected)
 
 
 def test_collision_configuration(hexapod_model: mujoco.MjModel) -> None:
@@ -113,19 +104,6 @@ def test_collision_configuration(hexapod_model: mujoco.MjModel) -> None:
       assert geom.condim == 1
 
 
-def test_builtin_sensor_names(hexapod_model: mujoco.MjModel) -> None:
-  sensor_names = {
-    hexapod_model.sensor(sensor_id).name for sensor_id in range(hexapod_model.nsensor)
-  }
-  assert sensor_names == {
-    "imu_ang_vel",
-    "imu_lin_vel",
-    "imu_lin_acc",
-    "imu_upvector",
-    "root_angmom",
-  }
-
-
 def test_exported_scene_loads_with_mesh_assets(tmp_path: Path) -> None:
   scene = Scene(
     SceneCfg(entities={"robot": hexapod_constants.get_hexapod_robot_cfg()}),
@@ -134,9 +112,7 @@ def test_exported_scene_loads_with_mesh_assets(tmp_path: Path) -> None:
   output_dir = tmp_path / "hexapod_scene"
   scene.write(output_dir)
 
-  asset_files = tuple((output_dir / "assets").rglob("*.STL"))
-  assert len(asset_files) == 25
-
+  assert len(tuple((output_dir / "assets").rglob("*.STL"))) == 25
   model = mujoco.MjModel.from_xml_path(str(output_dir / "scene.xml"))
   assert model.nu == 18
   assert model.key(0).name == "init_state"

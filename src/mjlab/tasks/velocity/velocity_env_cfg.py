@@ -54,6 +54,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     debug_vis=True,
   )
 
+  # 足端高度扫描传感器，用于检测足端与地面的高度差，帮助机器人在不平坦地形上保持稳定。
   foot_height_scan = TerrainHeightSensorCfg(
     name="foot_height_scan",
     frame=(),  # Set per-robot: frame and pattern.
@@ -140,8 +141,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   observations = {
     "actor": ObservationGroupCfg(
       terms=actor_terms,
-      concatenate_terms=True,
-      enable_corruption=True,
+      concatenate_terms=True, #输出一个扁平化的向量，而不是一个字典
+      enable_corruption=True, #噪声注入开启
     ),
     "critic": ObservationGroupCfg(
       terms=critic_terms,
@@ -181,7 +182,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     "twist": UniformVelocityCommandCfg(
       entity_name="robot",
       resampling_time_range=(3.0, 8.0),
-      rel_standing_envs=0.1,
+      rel_standing_envs=0.1, #10%的概率执行站立指令
       rel_heading_envs=0.3,
       rel_forward_envs=0.2,
       heading_command=True,
@@ -248,6 +249,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "shared_random": True,  # All foot geoms share the same friction.
       },
     ),
+    # 编码器偏置事件，用于在仿真启动时为机器人的编码器添加随机偏置，以模拟传感器误差。
     "encoder_bias": EventTermCfg(
       mode="startup",
       func=dr.encoder_bias,
@@ -256,6 +258,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "bias_range": (-0.015, 0.015),
       },
     ),
+    # 质心偏移事件，用于在仿真启动时为机器人的质心位置添加随机偏移，以模拟机器人在不同负载下的动态特性。
     "base_com": EventTermCfg(
       mode="startup",
       func=dr.body_com_offset,
@@ -272,7 +275,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   ##
-  # Rewards
+  # Rewards 字典
+  # 对于每一个兼职对 对应一个 RewardTermCfg 对象，包含了奖励函数、权重和参数。params和func对应的，后期会有调用
   ##
 
   rewards = {
@@ -390,7 +394,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   ##
-  # Curriculum
+  # Curriculum 地形
   ##
 
   curriculum = {

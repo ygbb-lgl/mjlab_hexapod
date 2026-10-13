@@ -7,7 +7,7 @@ from typing import Any, cast
 import torch
 from tensordict import TensorDict
 
-from mjlab.asset_zoo.robots.hexapod_tethered.hexapod_constants import JOINT_NAMES
+from mjlab.asset_zoo.robots.hexapod_compare.hexapod_compare_constants import JOINT_NAMES
 from mjlab.rl import RslRlOnPolicyRunnerCfg
 from mjlab.tasks.registry import load_env_cfg, load_rl_cfg
 from mjlab.tasks.velocity.config.hexapod_safe.actions import (

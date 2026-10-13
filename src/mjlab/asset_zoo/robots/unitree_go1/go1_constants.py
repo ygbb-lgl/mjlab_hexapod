@@ -31,12 +31,14 @@ def get_spec() -> mujoco.MjSpec:
 # Rotor inertia.
 # Ref: https://github.com/unitreerobotics/unitree_ros/blob/master/robots/go1_description/urdf/go1.urdf#L515
 # Extracted Ixx (rotation along x-axis).
+# 电机转子惯量
 ROTOR_INERTIA = 0.000111842
 
-# Gearbox.
+# Gearbox.减速比
 HIP_GEAR_RATIO = 6
 KNEE_GEAR_RATIO = HIP_GEAR_RATIO * 1.5
 
+# 设置电机参数，反射惯量、速度限制、力矩限制
 HIP_ACTUATOR = ElectricActuator(
   reflected_inertia=reflected_inertia(ROTOR_INERTIA, HIP_GEAR_RATIO),
   velocity_limit=30.1,
@@ -48,15 +50,18 @@ KNEE_ACTUATOR = ElectricActuator(
   effort_limit=35.55,
 )
 
+# 计算pd的参数
 NATURAL_FREQ = 10 * 2.0 * 3.1415926535  # 10Hz
 DAMPING_RATIO = 2.0
 
+# 计算kp和kd
 STIFFNESS_HIP = HIP_ACTUATOR.reflected_inertia * NATURAL_FREQ**2
 DAMPING_HIP = 2 * DAMPING_RATIO * HIP_ACTUATOR.reflected_inertia * NATURAL_FREQ
 
 STIFFNESS_KNEE = KNEE_ACTUATOR.reflected_inertia * NATURAL_FREQ**2
 DAMPING_KNEE = 2 * DAMPING_RATIO * KNEE_ACTUATOR.reflected_inertia * NATURAL_FREQ
 
+# 设置pd控制器
 GO1_HIP_ACTUATOR_CFG = BuiltinPositionActuatorCfg(
   target_names_expr=(".*_hip_joint", ".*_thigh_joint"),
   stiffness=STIFFNESS_HIP,
@@ -77,6 +82,7 @@ GO1_KNEE_ACTUATOR_CFG = BuiltinPositionActuatorCfg(
 ##
 
 
+# 初始站立关节角度
 INIT_STATE = EntityCfg.InitialStateCfg(
   pos=(0.0, 0.0, 0.278),
   joint_pos={
@@ -147,8 +153,8 @@ def get_go1_robot_cfg() -> EntityCfg:
   return EntityCfg(
     init_state=INIT_STATE,
     collisions=(FULL_COLLISION,),
-    spec_fn=get_spec,
-    articulation=GO1_ARTICULATION,
+    spec_fn=get_spec, # 导入xml文件
+    articulation=GO1_ARTICULATION, # 导入actuator配置
   )
 
 
@@ -170,4 +176,7 @@ if __name__ == "__main__":
 
   robot = Entity(get_go1_robot_cfg())
 
-  viewer.launch(robot.spec.compile())
+  # viewer.launch(robot.spec.compile())
+
+  print(f"STIFFNESS_HIP: {STIFFNESS_HIP}, DAMPING_HIP: {DAMPING_HIP}")
+  print(f"STIFFNESS_KNEE: {STIFFNESS_KNEE}, DAMPING_KNEE: {DAMPING_KNEE}")

@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 
 from mjlab.actuator import BuiltinPositionActuatorCfg
-from mjlab.asset_zoo.robots.hexapod_tethered.hexapod_constants import (
+from mjlab.asset_zoo.robots.hexapod_compare.hexapod_compare_constants import (
   FOOT_GEOM_NAMES,
   FULL_COLLISION,
   INIT_STATE,

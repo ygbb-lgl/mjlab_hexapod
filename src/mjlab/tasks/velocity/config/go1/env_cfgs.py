@@ -33,6 +33,7 @@ def unitree_go1_rough_env_cfg(
   play: bool = False,
 ) -> ManagerBasedRlEnvCfg:
   """Create Unitree Go1 rough terrain velocity configuration."""
+  # 创建通用任务配置 actor critic reward reset curriculum
   cfg = make_velocity_env_cfg()
 
   cfg.sim.mujoco.ccd_iterations = 500
@@ -45,7 +46,7 @@ def unitree_go1_rough_env_cfg(
   # Set raycast sensor frame to Go1 trunk.
   for sensor in cfg.scene.sensors or ():
     if sensor.name == "terrain_scan":
-      assert isinstance(sensor, RayCastSensorCfg)
+      assert isinstance(sensor, RayCastSensorCfg) # 断句，if not RayCastSensorCfg直接报错
       assert isinstance(sensor.frame, ObjRef)
       sensor.frame.name = "trunk"
 
@@ -54,6 +55,7 @@ def unitree_go1_rough_env_cfg(
   geom_names = tuple(f"{name}_foot_collision" for name in foot_names)
 
   # Wire foot height scan to per-foot sites.
+  # 足端高度传感器，进行高度扫描，检测足端高度，防止碰撞
   for sensor in cfg.scene.sensors or ():
     if sensor.name == "foot_height_scan":
       assert isinstance(sensor, TerrainHeightSensorCfg)
@@ -146,6 +148,7 @@ def unitree_go1_rough_env_cfg(
 
   # Replace the base foot_friction with per-axis friction events for condim 6.
   del cfg.events["foot_friction"]
+  # 修改足端摩擦系数，随机化
   cfg.events["foot_friction_slide"] = EventTermCfg(
     mode="startup",
     func=envs_mdp.dr.geom_friction,
@@ -157,6 +160,7 @@ def unitree_go1_rough_env_cfg(
       "shared_random": True,
     },
   )
+  # 旋转摩擦
   cfg.events["foot_friction_spin"] = EventTermCfg(
     mode="startup",
     func=envs_mdp.dr.geom_friction,
@@ -169,6 +173,7 @@ def unitree_go1_rough_env_cfg(
       "shared_random": True,
     },
   )
+  # 滚动摩擦
   cfg.events["foot_friction_roll"] = EventTermCfg(
     mode="startup",
     func=envs_mdp.dr.geom_friction,

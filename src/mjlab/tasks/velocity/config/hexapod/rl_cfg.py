@@ -1,4 +1,4 @@
-"""RL configuration for the tethered hexapod velocity tasks."""
+"""PPO configuration for the crab-style hexapod velocity task."""
 
 from mjlab.rl import (
   RslRlModelCfg,
@@ -6,9 +6,11 @@ from mjlab.rl import (
   RslRlPpoAlgorithmCfg,
 )
 
+DEFAULT_ROLLOUT_STEPS = 24
+
 
 def hexapod_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
-  """Create the PPO runner configuration for the tethered hexapod."""
+  """Create the PPO runner configuration for the hexapod."""
   return RslRlOnPolicyRunnerCfg(
     actor=RslRlModelCfg(
       hidden_dims=(512, 256, 128),
@@ -32,7 +34,7 @@ def hexapod_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
       entropy_coef=0.01,
       num_learning_epochs=5,
       num_mini_batches=4,
-      learning_rate=1e-3,
+      learning_rate=1.0e-3,
       schedule="adaptive",
       gamma=0.99,
       lam=0.95,
@@ -41,7 +43,7 @@ def hexapod_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
     ),
     clip_actions=1.0,
     experiment_name="hexapod_velocity",
-    save_interval=50,
-    num_steps_per_env=24,
+    save_interval=500,
+    num_steps_per_env=DEFAULT_ROLLOUT_STEPS,
     max_iterations=10_000,
   )

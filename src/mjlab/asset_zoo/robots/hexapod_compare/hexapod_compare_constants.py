@@ -1,4 +1,4 @@
-"""Tethered hexapod constants and native mjlab entity configuration."""
+"""Hexapod Compare constants and native mjlab entity configuration."""
 
 from pathlib import Path
 
@@ -13,11 +13,16 @@ from mjlab.utils.spec_config import CollisionCfg
 # MJCF and assets.
 ##
 
-HEXAPOD_XML: Path = (
-  MJLAB_SRC_PATH / "asset_zoo" / "robots" / "hexapod_tethered" / "xmls" / "hexapod.xml"
+HEXAPOD_COMPARE_XML: Path = (
+  MJLAB_SRC_PATH
+  / "asset_zoo"
+  / "robots"
+  / "hexapod_compare"
+  / "xmls"
+  / "hexapod_compare.xml"
 )
-assert HEXAPOD_XML.exists()
-HEXAPOD_ASSET_DIR = HEXAPOD_XML.parent / "assets"
+assert HEXAPOD_COMPARE_XML.exists()
+HEXAPOD_COMPARE_ASSET_DIR = HEXAPOD_COMPARE_XML.parent / "assets"
 
 LEG_NAMES = ("RF", "RM", "RB", "LF", "LM", "LB")
 JOINT_NAMES = tuple(
@@ -54,8 +59,8 @@ SAFE_JOINT_SIGNS = (
 
 def get_spec() -> mujoco.MjSpec:
   """Load a fresh robot specification with exportable mesh buffers."""
-  spec = mujoco.MjSpec.from_file(str(HEXAPOD_XML))
-  for asset_path in sorted(HEXAPOD_ASSET_DIR.glob("*.STL")):
+  spec = mujoco.MjSpec.from_file(str(HEXAPOD_COMPARE_XML))
+  for asset_path in sorted(HEXAPOD_COMPARE_ASSET_DIR.glob("*.STL")):
     spec.assets[f"assets/{asset_path.name}"] = asset_path.read_bytes()
   return spec
 
@@ -74,7 +79,7 @@ LEG_DAMPING = 1.2
 LEG_EFFORT_LIMIT = 50.0
 LEG_ARMATURE = 0.005
 
-HEXAPOD_LEG_ACTUATOR_CFG = BuiltinPositionActuatorCfg(
+HEXAPOD_COMPARE_LEG_ACTUATOR_CFG = BuiltinPositionActuatorCfg(
   target_names_expr=(r".*_(HAA|HFE|KFE)",),
   stiffness=LEG_STIFFNESS,
   damping=LEG_DAMPING,
@@ -116,28 +121,28 @@ FULL_COLLISION = CollisionCfg(
 # Final config.
 ##
 
-HEXAPOD_ARTICULATION = EntityArticulationInfoCfg(
-  actuators=(HEXAPOD_LEG_ACTUATOR_CFG,),
+HEXAPOD_COMPARE_ARTICULATION = EntityArticulationInfoCfg(
+  actuators=(HEXAPOD_COMPARE_LEG_ACTUATOR_CFG,),
   soft_joint_pos_limit_factor=0.8,
 )
 
 
-def get_hexapod_robot_cfg() -> EntityCfg:
-  """Return a fresh tethered hexapod entity configuration."""
+def get_hexapod_compare_robot_cfg() -> EntityCfg:
+  """Return a fresh Hexapod Compare entity configuration."""
   return EntityCfg(
     init_state=INIT_STATE,
     collisions=(FULL_COLLISION,),
     spec_fn=get_spec,
-    articulation=HEXAPOD_ARTICULATION,
+    articulation=HEXAPOD_COMPARE_ARTICULATION,
   )
 
 
 # Keep the same torque-aware scaling convention as the other mjlab locomotion
 # assets. At a unit action, the policy requests one quarter of the maximum
 # torque-equivalent position error.
-HEXAPOD_ACTION_SCALE = {
+HEXAPOD_COMPARE_ACTION_SCALE = {
   expr: 0.25 * LEG_EFFORT_LIMIT / LEG_STIFFNESS
-  for expr in HEXAPOD_LEG_ACTUATOR_CFG.target_names_expr
+  for expr in HEXAPOD_COMPARE_LEG_ACTUATOR_CFG.target_names_expr
 }
 
 
@@ -146,5 +151,5 @@ if __name__ == "__main__":
 
   from mjlab.entity import Entity
 
-  robot = Entity(get_hexapod_robot_cfg())
+  robot = Entity(get_hexapod_compare_robot_cfg())
   viewer.launch(robot.spec.compile())

@@ -49,7 +49,7 @@ def hexapod_safe_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
     # the same noisy 66-D actor vector.
     obs_groups={"actor": ("actor",), "critic": ("actor",)},
     experiment_name="el_4090_safe_mjlab",
-    save_interval=50,
+    save_interval=500,
     num_steps_per_env=24,
     max_iterations=1500,
   )

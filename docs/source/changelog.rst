@@ -8,6 +8,10 @@ Upcoming version (not yet released)
 Added
 ^^^^^
 
+- Added an independent flat-ground Hexapod velocity task with XML-calibrated
+  action limits and initial pose, observable gait phase, and alternating
+  three-foot support rewards for a crab-style tripod gait.
+
 - Added native mjlab flat- and rough-terrain velocity tasks, robot assets, and a
   native-MuJoCo ONNX sim2sim runner for the tethered hexapod. This also includes
   an EL-4090-derived ordinary PPO task with its tuned parameters, rewards,
@@ -18,6 +22,19 @@ Added
 
 Changed
 ^^^^^^^
+
+- Renamed the ``hexapod_tethered`` robot asset and its ordinary velocity tasks
+  to ``hexapod_compare``, including their MJCF, Python modules, public config
+  symbols, task IDs, and log directory.
+
+- The ordinary hexapod tasks now use the MuJoCo Playground hexapod reward
+  equations and scales while retaining mjlab control, randomization, termination,
+  PPO, and simulation settings. Their foot-force rewards read the native
+  ``reduce="netforce"`` contact tensor using the same extraction convention as
+  Go1 ``soft_landing``.
+
+- Changed the EL-4090 safe hexapod task to save checkpoints every 500 training
+  iterations by default.
 
 - Bumped ``rsl-rl-lib`` from 5.5.0 to 5.5.1. This removes the need for capping
   ``wandb`` below 0.29.

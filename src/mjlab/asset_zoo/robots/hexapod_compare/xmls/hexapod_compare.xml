@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<mujoco model="hexapod_tethered">
+<mujoco model="hexapod_compare">
     <compiler angle="radian" meshdir="assets" autolimits="true" balanceinertia="true" />
 
     <default>
-        <default class="hexapod">
+        <default class="hexapod_compare">
             <geom condim="1" contype="0" conaffinity="0" />
             <joint axis="0 0 1" />
 
@@ -39,7 +39,7 @@
     </default>
 
     <asset>
-        <mesh class="hexapod" name="BASE" file="BASE.STL" />
+        <mesh class="hexapod_compare" name="BASE" file="BASE.STL" />
         <mesh name="RF_HIP" file="RF_HIP.STL" />
         <mesh name="RF_THIGH" file="RF_THIGH.STL" />
         <mesh name="RF_SHANK" file="RF_SHANK.STL" />
@@ -68,7 +68,7 @@
 
     <worldbody>
         <light name="spotlight" mode="targetbodycom" target="trunk" pos="3 0 4" />
-        <body name="trunk" pos="0 0 0.3" childclass="hexapod">
+        <body name="trunk" pos="0 0 0.3" childclass="hexapod_compare">
             <camera name="track" pos="1.2 -1.5 2.0" mode="trackcom" />
             <!-- URDF link BASE; the body name stays "trunk" for the training API. -->
             <inertial pos="-0.051 -0.01 0.02" mass="19.901" fullinertia="0.324 1.886 2.123 0.005 0.057 -0.001" />

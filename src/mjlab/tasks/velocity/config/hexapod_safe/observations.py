@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from mjlab.asset_zoo.robots.hexapod_tethered.hexapod_constants import (
+from mjlab.asset_zoo.robots.hexapod_compare.hexapod_compare_constants import (
   SAFE_JOINT_SIGNS,
 )
 from mjlab.entity import Entity
