@@ -41,7 +41,6 @@ def hexapod_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
       desired_kl=0.01,
       max_grad_norm=1.0,
     ),
-    clip_actions=1.0,
     experiment_name="hexapod_velocity",
     save_interval=500,
     num_steps_per_env=DEFAULT_ROLLOUT_STEPS,

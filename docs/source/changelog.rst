@@ -9,8 +9,8 @@ Added
 ^^^^^
 
 - Added an independent flat-ground Hexapod velocity task with XML-calibrated
-  action limits and initial pose, observable gait phase, and alternating
-  three-foot support rewards for a crab-style tripod gait.
+  action scaling and initial pose, and alternating three-foot support rewards
+  for a crab-style tripod gait.
 
 - Added native mjlab flat- and rough-terrain velocity tasks, robot assets, and a
   native-MuJoCo ONNX sim2sim runner for the tethered hexapod. This also includes
@@ -22,6 +22,21 @@ Added
 
 Changed
 ^^^^^^^
+
+- The independent flat-ground Hexapod task now keeps its tripod clock internal
+  to the reward and uses the same 66-dimensional policy observation layout as
+  the other Hexapod tasks.
+
+- The independent flat-ground Hexapod task now leaves policy actions and scaled
+  joint-position targets unclipped, matching the Go1 task. Native Hexapod
+  sim2sim also defaults to no clipping when a policy declares no explicit bound.
+
+- The independent flat-ground Hexapod task now defines a shared observation-noise
+  level, defaulting to ``1.5``, and applies it to Playground-compatible per-term
+  noise scales. Setting the level to zero disables observation noise.
+
+- Hexapod play mode now displays the magenta foot-height raycast markers while
+  keeping that debug visualization disabled during training.
 
 - Renamed the ``hexapod_tethered`` robot asset and its ordinary velocity tasks
   to ``hexapod_compare``, including their MJCF, Python modules, public config

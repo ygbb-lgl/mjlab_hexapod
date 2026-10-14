@@ -142,23 +142,23 @@ HEXAPOD_KFE_ACTUATOR_CFG = BuiltinPositionActuatorCfg(
 # with q=0, it makes foot height 5--28 times more sensitive to KFE motion.
 INIT_JOINT_POS = {
   "RF_HAA": 0.0,
-  "RF_HFE": -0.01914,
-  "RF_KFE": 0.15,
+  "RF_HFE": 0.0,
+  "RF_KFE": 0.0,
   "RM_HAA": 0.0,
-  "RM_HFE": -0.01914,
-  "RM_KFE": 0.15,
+  "RM_HFE": 0.0,
+  "RM_KFE": 0.0,
   "RB_HAA": 0.0,
-  "RB_HFE": -0.01341,
-  "RB_KFE": -0.15,
+  "RB_HFE": 0.0,
+  "RB_KFE": 0.0,
   "LF_HAA": 0.0,
-  "LF_HFE": 0.01341,
-  "LF_KFE": -0.15,
+  "LF_HFE": 0.0,
+  "LF_KFE": 0.0,
   "LM_HAA": 0.0,
-  "LM_HFE": 0.01341,
-  "LM_KFE": -0.15,
+  "LM_HFE": 0.0,
+  "LM_KFE": 0.0,
   "LB_HAA": 0.0,
-  "LB_HFE": 0.01914,
-  "LB_KFE": 0.15,
+  "LB_HFE": 0.0,
+  "LB_KFE": 0.0,
 }
 
 # At root z=0.313 m, every 0.023 m foot sphere starts about 0.30 mm above
@@ -239,7 +239,7 @@ for a in HEXAPOD_ARTICULATION.actuators:
   names = a.target_names_expr
   assert e is not None
   for n in names:
-    HEXAPOD_ACTION_SCALE[n] = 0.25 * e / s
+    HEXAPOD_ACTION_SCALE[n] = 0.25 
 
 
 if __name__ == "__main__":

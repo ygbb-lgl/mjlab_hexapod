@@ -160,7 +160,7 @@ class HexapodPolicy:
     self.root_body_id = _resolve_name(model, mujoco.mjtObj.mjOBJ_BODY, "trunk")
     self.last_action = np.zeros(len(self.joint_names), dtype=np.float32)
     self.joint_signs = np.ones(len(self.joint_names), dtype=np.float32)
-    self.default_action_clip = float(metadata.get("policy_action_clip", "1.0"))
+    self.default_action_clip = float(metadata.get("policy_action_clip", "inf"))
     self.planar_command_deadzone = float(metadata.get("planar_command_deadzone", "0.0"))
     if metadata.get("hexapod_action_mode") == "signed_axes":
       if "hexapod_joint_signs" not in metadata:

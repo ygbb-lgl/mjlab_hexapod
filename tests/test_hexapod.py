@@ -15,15 +15,19 @@ from mjlab.asset_zoo.robots.hexapod.hexapod_constants import (
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.sensor import ContactSensorCfg, ObjRef, TerrainHeightSensorCfg
-from mjlab.tasks.velocity.config.hexapod import observations, rewards
+from mjlab.tasks.velocity.config.hexapod import env_cfgs as hexapod_env_cfgs
+from mjlab.tasks.velocity.config.hexapod import rewards
 from mjlab.tasks.velocity.config.hexapod.env_cfgs import (
   FOOT_CLEARANCE_HEIGHT,
   GAIT_CYCLE_TIME,
+  OBSERVATION_NOISE_LEVEL,
+  OBSERVATION_NOISE_SCALES,
   SOFT_LANDING_WEIGHT,
   hexapod_flat_env_cfg,
 )
 from mjlab.tasks.velocity.config.hexapod.rl_cfg import hexapod_ppo_runner_cfg
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
+from mjlab.utils.noise import UniformNoiseCfg
 
 
 def test_flat_configuration_uses_ordered_six_leg_interface() -> None:
@@ -38,18 +42,31 @@ def test_flat_configuration_uses_ordered_six_leg_interface() -> None:
   assert tuple(action.actuator_names) == JOINT_NAMES
   assert action.preserve_order
   assert action.scale == HEXAPOD_ACTION_SCALE
-  assert action.clip == {
-    r".*_HAA": (-0.72, 0.72),
-    r".*_(HFE|KFE)": (-0.54, 0.54),
-  }
+  assert action.clip is None
 
   for group_name in ("actor", "critic"):
     terms = cfg.observations[group_name].terms
     assert "height_scan" not in terms
-    assert "gait_phase" in terms
+    assert "gait_phase" not in terms
     joint_cfg = terms["joint_pos"].params["asset_cfg"]
     assert tuple(joint_cfg.joint_names) == JOINT_NAMES
     assert joint_cfg.preserve_order
+
+  assert tuple(cfg.observations["actor"].terms) == (
+    "base_lin_vel",
+    "base_ang_vel",
+    "projected_gravity",
+    "joint_pos",
+    "joint_vel",
+    "actions",
+    "command",
+  )
+
+  for name, scale in OBSERVATION_NOISE_SCALES.items():
+    noise = cfg.observations["actor"].terms[name].noise
+    assert isinstance(noise, UniformNoiseCfg)
+    assert noise.n_min == pytest.approx(-OBSERVATION_NOISE_LEVEL * scale)
+    assert noise.n_max == pytest.approx(OBSERVATION_NOISE_LEVEL * scale)
 
 
 def test_flat_configuration_wires_six_foot_sensors() -> None:
@@ -64,11 +81,26 @@ def test_flat_configuration_wires_six_foot_sensors() -> None:
 
   height = sensors["foot_height_scan"]
   assert isinstance(height, TerrainHeightSensorCfg)
+  assert not height.debug_vis
   assert isinstance(height.frame, tuple)
   frames = cast(tuple[ObjRef, ...], height.frame)
   assert tuple(frame.name for frame in frames) == FOOT_SITE_NAMES
   assert "illegal_ground_contact" in sensors
   assert "terrain_scan" not in sensors
+
+  play_cfg = hexapod_flat_env_cfg(play=True)
+  play_sensors = {sensor.name: sensor for sensor in play_cfg.scene.sensors or ()}
+  play_height = play_sensors["foot_height_scan"]
+  assert isinstance(play_height, TerrainHeightSensorCfg)
+  assert play_height.debug_vis
+
+
+def test_zero_observation_noise_level_disables_noise(monkeypatch) -> None:
+  monkeypatch.setattr(hexapod_env_cfgs, "OBSERVATION_NOISE_LEVEL", 0.0)
+  cfg = hexapod_env_cfgs.hexapod_flat_env_cfg()
+
+  for name in OBSERVATION_NOISE_SCALES:
+    assert cfg.observations["actor"].terms[name].noise is None
 
 
 def test_rewards_and_commands_are_scaled_for_the_xml_model() -> None:
@@ -206,25 +238,10 @@ def test_tripod_reward_ignores_grazing_contacts() -> None:
   torch.testing.assert_close(cost, torch.ones(1))
 
 
-def test_phase_observation_exposes_the_reward_clock() -> None:
-  env = cast(
-    Any,
-    SimpleNamespace(
-      episode_length_buf=torch.tensor([0, 15]),
-      step_dt=0.02,
-    ),
-  )
-  phase = observations.tripod_phase(env, cycle_time=GAIT_CYCLE_TIME)
-  torch.testing.assert_close(
-    phase,
-    torch.tensor([[0.0, 1.0], [0.0, -1.0]]),
-    atol=1.0e-6,
-    rtol=0.0,
-  )
-
-
-def test_runner_clips_policy_actions_and_saves_every_500_iterations() -> None:
+def test_runner_leaves_policy_actions_unclipped_and_saves_every_500_iterations() -> (
+  None
+):
   cfg = hexapod_ppo_runner_cfg()
-  assert cfg.clip_actions == 1.0
+  assert cfg.clip_actions is None
   assert cfg.save_interval == 500
   assert cfg.experiment_name == "hexapod_velocity"

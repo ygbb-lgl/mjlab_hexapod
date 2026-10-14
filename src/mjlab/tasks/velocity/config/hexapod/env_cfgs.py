@@ -16,7 +16,6 @@ from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs import mdp as envs_mdp
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers.event_manager import EventTermCfg
-from mjlab.managers.observation_manager import ObservationTermCfg
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
@@ -30,12 +29,21 @@ from mjlab.sensor import (
 from mjlab.tasks.velocity import mdp
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 from mjlab.tasks.velocity.velocity_env_cfg import make_velocity_env_cfg
+from mjlab.utils.noise import UniformNoiseCfg as Unoise
 
-from . import observations, rewards
+from . import rewards
 from .rl_cfg import DEFAULT_ROLLOUT_STEPS
 
 GAIT_CYCLE_TIME = 0.6
-FOOT_CLEARANCE_HEIGHT = 0.05
+FOOT_CLEARANCE_HEIGHT = 0.1
+OBSERVATION_NOISE_LEVEL = 1.5
+OBSERVATION_NOISE_SCALES = {
+  "base_lin_vel": 0.1,
+  "base_ang_vel": 0.2,
+  "projected_gravity": 0.1,
+  "joint_pos": 0.05,
+  "joint_vel": 1.5,
+}
 
 # Go1's foot rewards sum over four feet. Scaling by 4/6 keeps their total
 # contribution comparable when the same kernels operate on six feet.
@@ -65,20 +73,25 @@ def _configure_ordered_joint_io(cfg: ManagerBasedRlEnvCfg) -> None:
     terms["joint_vel"].params["asset_cfg"] = SceneEntityCfg(
       "robot", joint_names=JOINT_NAMES, preserve_order=True
     )
-    terms["gait_phase"] = ObservationTermCfg(
-      func=observations.tripod_phase,
-      params={"cycle_time": GAIT_CYCLE_TIME},
-    )
 
   action = cfg.actions["joint_pos"]
   assert isinstance(action, JointPositionActionCfg)
   action.actuator_names = JOINT_NAMES
   action.preserve_order = True
   action.scale = HEXAPOD_ACTION_SCALE
-  action.clip = {
-    r".*_HAA": (-0.72, 0.72),
-    r".*_(HFE|KFE)": (-0.54, 0.54),
-  }
+
+
+def _configure_observation_noise(cfg: ManagerBasedRlEnvCfg) -> None:
+  """Apply the Playground-style global level to per-term noise scales."""
+  if OBSERVATION_NOISE_LEVEL < 0.0:
+    raise ValueError("OBSERVATION_NOISE_LEVEL must be non-negative")
+
+  terms = cfg.observations["actor"].terms
+  for name, scale in OBSERVATION_NOISE_SCALES.items():
+    amplitude = OBSERVATION_NOISE_LEVEL * scale
+    terms[name].noise = (
+      None if amplitude == 0.0 else Unoise(n_min=-amplitude, n_max=amplitude)
+    )
 
 
 def _configure_rewards(cfg: ManagerBasedRlEnvCfg) -> None:
@@ -115,7 +128,7 @@ def _configure_rewards(cfg: ManagerBasedRlEnvCfg) -> None:
         r".*_(HFE|KFE)": 0.30,
       },
       "walking_threshold": 0.05,
-      "running_threshold": 1.0,
+      "running_threshold": 0.6,
     }
   )
 
@@ -242,6 +255,7 @@ def hexapod_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   for group_name in ("actor", "critic"):
     cfg.observations[group_name].terms.pop("height_scan", None)
   _configure_ordered_joint_io(cfg)
+  _configure_observation_noise(cfg)
 
   # MuJoCo q coordinates already follow each XML axis, including axis="0 0 -1".
   # No extra sign flip belongs here; the explicit order prevents silent remapping.
@@ -305,13 +319,13 @@ def hexapod_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
       "step": 3000 * DEFAULT_ROLLOUT_STEPS,
       "lin_vel_x": (-0.5, 0.5),
       "lin_vel_y": (-0.3, 0.3),
-      "ang_vel_z": (-0.35, 0.35),
+      "ang_vel_z": (-0.4, 0.4),
     },
     {
       "step": 7000 * DEFAULT_ROLLOUT_STEPS,
-      "lin_vel_x": (-0.6, 0.6),
-      "lin_vel_y": (-0.4, 0.4),
-      "ang_vel_z": (-0.45, 0.45),
+      "lin_vel_x": (-0.8, 0.8),
+      "lin_vel_y": (-0.5, 0.5),
+      "ang_vel_z": (-0.8, 0.8),
     },
   ]
 
@@ -340,8 +354,14 @@ def hexapod_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     cfg.observations["actor"].enable_corruption = False
     cfg.events.pop("push_robot", None)
     cfg.curriculum = {}
-    twist.ranges.lin_vel_x = (-0.6, 0.6)
-    twist.ranges.lin_vel_y = (-0.4, 0.4)
-    twist.ranges.ang_vel_z = (-0.45, 0.45)
+
+    for sensor in cfg.scene.sensors or ():
+      if sensor.name == "foot_height_scan":
+        assert isinstance(sensor, TerrainHeightSensorCfg)
+        sensor.debug_vis = True
+
+    twist.ranges.lin_vel_x = (-0.8, 0.8)
+    twist.ranges.lin_vel_y = (-0.5, 0.5)
+    twist.ranges.ang_vel_z = (-0.8, 0.8)
 
   return cfg
