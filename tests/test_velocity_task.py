@@ -7,13 +7,11 @@ from mjlab.asset_zoo.robots import (
   GO1_ACTION_SCALE,
   HEXAPOD_ACTION_SCALE,
 )
-from mjlab.asset_zoo.robots.hexapod_compare.hexapod_compare_constants import (
-  HEXAPOD_COMPARE_ACTION_SCALE,
+from mjlab.asset_zoo.robots.hexapod.hexapod_constants import (
   JOINT_NAMES,
 )
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.tasks.registry import list_tasks, load_env_cfg
-from mjlab.tasks.velocity.config.hexapod_safe.env_cfgs import EL4090_ACTION_SCALE
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 
 
@@ -37,7 +35,7 @@ def go1_velocity_task_ids(velocity_task_ids: list[str]) -> list[str]:
 
 @pytest.fixture(scope="module")
 def hexapod_velocity_task_ids(velocity_task_ids: list[str]) -> list[str]:
-  """Get all tethered hexapod velocity task IDs."""
+  """Get all hexapod velocity task IDs."""
   return [t for t in velocity_task_ids if "Hexapod" in t]
 
 
@@ -112,13 +110,7 @@ def test_hexapod_velocity_has_required_sensors(
     assert cfg.scene.sensors is not None
     sensor_names = {sensor.name for sensor in cfg.scene.sensors}
     assert "feet_ground_contact" in sensor_names
-    if task_id == "Mjlab-Velocity-Flat-Hexapod":
-      assert "illegal_ground_contact" in sensor_names
-    else:
-      assert "trunk_ground_touch" in sensor_names
-    if "Rough" in task_id:
-      assert "self_collision" in sensor_names
-      assert "leg_ground_touch" in sensor_names
+    assert "illegal_ground_contact" in sensor_names
 
 
 def test_flat_velocity_tasks_have_plane_terrain(
@@ -157,7 +149,6 @@ def test_rough_velocity_tasks_have_generator_terrain(
 def test_rough_velocity_training_has_curriculum_enabled() -> None:
   """Rough velocity training tasks should have terrain curriculum enabled."""
   rough_training_tasks = [
-    "Mjlab-Velocity-Rough-Hexapod-Compare",
     "Mjlab-Velocity-Rough-Unitree-G1",
     "Mjlab-Velocity-Rough-Unitree-Go1",
   ]
@@ -178,7 +169,6 @@ def test_rough_velocity_training_has_curriculum_enabled() -> None:
 def test_rough_velocity_play_has_curriculum_disabled() -> None:
   """Rough velocity play tasks should have terrain curriculum disabled."""
   rough_training_tasks = [
-    "Mjlab-Velocity-Rough-Hexapod-Compare",
     "Mjlab-Velocity-Rough-Unitree-G1",
     "Mjlab-Velocity-Rough-Unitree-Go1",
   ]
@@ -237,17 +227,12 @@ def test_go1_velocity_has_correct_action_scale(
 def test_hexapod_velocity_has_correct_action_scale(
   hexapod_velocity_task_ids: list[str],
 ) -> None:
-  """Hexapod tasks should use their explicitly selected action scaling."""
+  """Hexapod tasks should use HEXAPOD_ACTION_SCALE."""
   for task_id in hexapod_velocity_task_ids:
     cfg = load_env_cfg(task_id)
     joint_pos_action = cfg.actions["joint_pos"]
     assert isinstance(joint_pos_action, JointPositionActionCfg)
-    if task_id.endswith("-Safe"):
-      assert joint_pos_action.scale == {".*": EL4090_ACTION_SCALE}
-    elif task_id.endswith("-Compare"):
-      assert joint_pos_action.scale == HEXAPOD_COMPARE_ACTION_SCALE
-    else:
-      assert joint_pos_action.scale == HEXAPOD_ACTION_SCALE
+    assert joint_pos_action.scale == HEXAPOD_ACTION_SCALE
 
 
 def test_hexapod_policy_io_uses_playground_order(
@@ -283,7 +268,4 @@ def test_hexapod_reset_uses_small_drop_height(
   for task_id in hexapod_velocity_task_ids:
     cfg = load_env_cfg(task_id)
     pose_range = cfg.events["reset_base"].params["pose_range"]
-    if task_id.endswith("-Safe"):
-      assert pose_range == {}
-    else:
-      assert pose_range["z"] == (0.0, 0.01)
+    assert pose_range["z"] == (0.0, 0.01)

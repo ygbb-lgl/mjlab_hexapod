@@ -124,9 +124,10 @@ def test_rewards_and_commands_are_scaled_for_the_xml_model() -> None:
 
   command = cfg.commands["twist"]
   assert isinstance(command, UniformVelocityCommandCfg)
-  assert command.ranges.lin_vel_x == (-0.3, 0.3)
-  assert command.ranges.lin_vel_y == (-0.2, 0.2)
-  assert command.ranges.ang_vel_z == (-0.25, 0.25)
+  initial_velocity_stage = cfg.curriculum["command_vel"].params["velocity_stages"][0]
+  assert initial_velocity_stage["lin_vel_x"] == (-0.3, 0.3)
+  assert initial_velocity_stage["lin_vel_y"] == (-0.2, 0.2)
+  assert initial_velocity_stage["ang_vel_z"] == (-0.25, 0.25)
 
 
 def _fake_gait_env(

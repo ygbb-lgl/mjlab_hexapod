@@ -179,6 +179,7 @@ def _configure_rewards(cfg: ManagerBasedRlEnvCfg) -> None:
     # tripod foot carries about 130 N, so 5 N safely separates the two.
     "contact_force_threshold": 5.0,
   }
+  # 因为rewards是python字典，不需要提前声明，可以直接创建，如果有就相当于覆值了
   cfg.rewards["tripod_contact_pattern"] = RewardTermCfg(
     func=rewards.TripodContactPattern,
     weight=1.0,
@@ -268,7 +269,7 @@ def hexapod_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
       "asset_cfg": SceneEntityCfg("robot", geom_names=FOOT_GEOM_NAMES),
       "operation": "abs",
       "axes": [0],
-      "ranges": (0.4, 1.3),
+      "ranges": (0.3, 1.5),
       "shared_random": True,
     },
   )
@@ -296,16 +297,47 @@ def hexapod_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
       "shared_random": True,
     },
   )
-  cfg.events["base_com"].params["asset_cfg"] = SceneEntityCfg(
-    "robot", body_names=("trunk",)
+  cfg.events["base_com"] = EventTermCfg(
+    mode="startup",
+    func=envs_mdp.dr.body_com_offset,
+    params={
+      "asset_cfg": SceneEntityCfg("robot", body_names=("trunk",)),
+      "operation": "add",
+      "ranges": {
+        0: (-0.15, 0.15),
+        1: (-0.1, 0.1),
+        2: (-0.05, 0.05),
+      },
+    },
+  )
+  cfg.events["body_mass"] = EventTermCfg(
+    mode="startup",
+    func=envs_mdp.dr.body_mass,
+    params={
+      "asset_cfg": SceneEntityCfg("robot", body_names=(r".*",)),
+      "operation": "scale",
+      "distribution": "uniform",
+      "ranges": (0.9, 1.1),
+      "shared_random": False,
+    },
+  )
+  cfg.events["joint_armature"] = EventTermCfg(
+    mode="startup",
+    func=envs_mdp.dr.dof_armature,
+    params={
+      "asset_cfg": SceneEntityCfg(
+        "robot", joint_names=JOINT_NAMES, preserve_order=True
+      ),
+      "operation": "scale",
+      "distribution": "uniform",
+      "ranges": (1.0, 1.05),
+      "shared_random": False,
+    },
   )
   cfg.events["reset_base"].params["pose_range"]["z"] = (0.0, 0.01)
 
   twist = cfg.commands["twist"]
   assert isinstance(twist, UniformVelocityCommandCfg)
-  twist.ranges.lin_vel_x = (-0.3, 0.3)
-  twist.ranges.lin_vel_y = (-0.2, 0.2)
-  twist.ranges.ang_vel_z = (-0.25, 0.25)
 
   cfg.curriculum.pop("terrain_levels", None)
   cfg.curriculum["command_vel"].params["velocity_stages"] = [

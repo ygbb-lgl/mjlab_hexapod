@@ -8,20 +8,25 @@ Upcoming version (not yet released)
 Added
 ^^^^^
 
+- Added independent startup randomization of every Hexapod body mass by
+  0.9--1.3 and every actuated joint armature by 1.0--1.05.
+
 - Added an independent flat-ground Hexapod velocity task with XML-calibrated
   action scaling and initial pose, and alternating three-foot support rewards
   for a crab-style tripod gait.
-
-- Added native mjlab flat- and rough-terrain velocity tasks, robot assets, and a
-  native-MuJoCo ONNX sim2sim runner for the tethered hexapod. This also includes
-  an EL-4090-derived ordinary PPO task with its tuned parameters, rewards,
-  joint-axis conversion, symmetry augmentation, and 66-dimensional observation.
 
 - Added ``SimulationCfg.graph_conditional`` to toggle MuJoCo Warp's CUDA graph
   conditional nodes, which require CUDA 12.4 or newer.
 
 Changed
 ^^^^^^^
+
+- Aligned the independent flat-ground Hexapod task's foot sliding-friction
+  randomization range with Go1 at 0.3--1.5.
+
+- Expanded the independent flat-ground Hexapod task's trunk center-of-mass
+  randomization to ±0.15 m longitudinally, ±0.10 m laterally, and ±0.05 m
+  vertically.
 
 - The independent flat-ground Hexapod task now keeps its tripod clock internal
   to the reward and uses the same 66-dimensional policy observation layout as
@@ -38,25 +43,18 @@ Changed
 - Hexapod play mode now displays the magenta foot-height raycast markers while
   keeping that debug visualization disabled during training.
 
-- Renamed the ``hexapod_tethered`` robot asset and its ordinary velocity tasks
-  to ``hexapod_compare``, including their MJCF, Python modules, public config
-  symbols, task IDs, and log directory.
-
-- The ordinary hexapod tasks now use the MuJoCo Playground hexapod reward
-  equations and scales while retaining mjlab control, randomization, termination,
-  PPO, and simulation settings. Their foot-force rewards read the native
-  ``reduce="netforce"`` contact tensor using the same extraction convention as
-  Go1 ``soft_landing``.
-
-- Changed the EL-4090 safe hexapod task to save checkpoints every 500 training
-  iterations by default.
-
 - Bumped ``rsl-rl-lib`` from 5.5.0 to 5.5.1. This removes the need for capping
   ``wandb`` below 0.29.
 
 - Bumped ``rsl-rl-lib`` from 5.4.2 to 5.5.0. This update removes the ``logger_type``
   attribute of the ``rsl_rl.utils.Logger``, so code that previously checked
   ``logger.logger_type`` must instead check the type of ``logger.writer``.
+
+Removed
+^^^^^^^
+
+- Removed the Hexapod Compare and Hexapod Safe velocity tasks, the dedicated
+  Compare robot asset, their registrations, tests, documentation, and export alias.
 
 Fixed
 ^^^^^

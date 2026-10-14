@@ -54,9 +54,9 @@ def test_actuator_pd_and_soft_joint_limits(hexapod_model: mujoco.MjModel) -> Non
     np.testing.assert_allclose(hexapod_model.joint(name).range, expected)
 
   assert hexapod_constants.HEXAPOD_ACTION_SCALE == {
-    r".*_HAA": pytest.approx(0.225),
-    r".*_HFE": pytest.approx(0.225),
-    r".*_KFE": pytest.approx(0.225),
+    r".*_HAA": pytest.approx(0.25),
+    r".*_HFE": pytest.approx(0.25),
+    r".*_KFE": pytest.approx(0.25),
   }
 
 
