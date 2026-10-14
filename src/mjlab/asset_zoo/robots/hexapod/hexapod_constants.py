@@ -73,17 +73,17 @@ KFE_GEAR_RATIO = 18
 HAA_ACTUATOR = ElectricActuator(
   reflected_inertia=reflected_inertia(ROTOR_INERTIA, HAA_GEAR_RATIO),
   velocity_limit=16.44,
-  effort_limit=90.0,
+  effort_limit=30.0,
 )
 HFE_ACTUATOR = ElectricActuator(
   reflected_inertia=reflected_inertia(ROTOR_INERTIA, HFE_GEAR_RATIO),
   velocity_limit=16.44,
-  effort_limit=90.0,
+  effort_limit=30.0,
 )
 KFE_ACTUATOR = ElectricActuator(
   reflected_inertia=reflected_inertia(ROTOR_INERTIA, KFE_GEAR_RATIO),
   velocity_limit=16.44,
-  effort_limit=90.0,
+  effort_limit=30.0,
 )
 
 # 计算pd的参数
