@@ -46,7 +46,9 @@ def unitree_go1_rough_env_cfg(
   # Set raycast sensor frame to Go1 trunk.
   for sensor in cfg.scene.sensors or ():
     if sensor.name == "terrain_scan":
-      assert isinstance(sensor, RayCastSensorCfg) # 断句，if not RayCastSensorCfg直接报错
+      assert isinstance(
+        sensor, RayCastSensorCfg
+      )  # 断句，if not RayCastSensorCfg直接报错
       assert isinstance(sensor.frame, ObjRef)
       sensor.frame.name = "trunk"
 

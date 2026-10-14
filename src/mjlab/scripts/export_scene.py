@@ -19,6 +19,7 @@ ENTITY_ALIASES: dict[str, str] = {
   "g1": "mjlab.asset_zoo.robots:get_g1_robot_cfg",
   "go1": "mjlab.asset_zoo.robots:get_go1_robot_cfg",
   "hexapod": "mjlab.asset_zoo.robots:get_hexapod_robot_cfg",
+  "hexapod_tethered": "mjlab.asset_zoo.robots:get_hexapod_tethered_robot_cfg",
   "yam": "mjlab.asset_zoo.robots:get_yam_robot_cfg",
 }
 

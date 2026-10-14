@@ -8,6 +8,14 @@ Upcoming version (not yet released)
 Added
 ^^^^^
 
+- Added a flat-ground ``Hexapod-Tethered`` velocity task and self-contained
+  robot asset. Its shared 19-output policy coordinates 18 leg targets with a
+  cable command, uses a 71-entry actor with a sensor-reconstructible
+  trunk-frame tether direction, and trains against a 110-entry asymmetric
+  critic. The XML cable gain maps the final action to 0--400 N of pulling
+  force, the four tether rewards retain their Playground scales, and its PPO
+  configuration is owned independently for task-specific tuning.
+
 - Added independent startup randomization of every Hexapod body mass by
   0.9--1.3 and every actuated joint armature by 1.0--1.05.
 
@@ -20,6 +28,10 @@ Added
 
 Changed
 ^^^^^^^
+
+- The ``Hexapod-Tethered`` task now applies an independent global observation
+  noise level of ``1.5`` to all actor sensor-noise scales, including cable
+  tension and the reconstructed tether yaw/pitch direction.
 
 - Aligned the independent flat-ground Hexapod task's foot sliding-friction
   randomization range with Go1 at 0.3--1.5.

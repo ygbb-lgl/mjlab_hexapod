@@ -47,7 +47,7 @@ def test_actuator_pd_and_soft_joint_limits(hexapod_model: mujoco.MjModel) -> Non
     assert actuator.gainprm[0] == 100.0
     assert actuator.biasprm[1] == -100.0
     assert actuator.biasprm[2] == -3.0
-    np.testing.assert_allclose(actuator.forcerange, (-90.0, 90.0))
+    np.testing.assert_allclose(actuator.forcerange, (-30.0, 30.0))
 
   for name in hexapod_constants.JOINT_NAMES:
     expected = (-0.8, 0.8) if name.endswith("HAA") else (-0.6, 0.6)

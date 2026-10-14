@@ -12,6 +12,10 @@ from mjlab.rl.runner import MjlabOnPolicyRunner
 class VelocityOnPolicyRunner(MjlabOnPolicyRunner):
   env: RslRlVecEnvWrapper
 
+  def get_policy_metadata(self, run_name: str) -> dict[str, list | str | float]:
+    """Return metadata attached to each exported velocity policy."""
+    return get_base_metadata(self.env.unwrapped, run_name)
+
   def save(self, path: str, infos=None):
     super().save(path, infos)
     policy_dir, filename, onnx_path = self._get_export_paths(path)
@@ -19,7 +23,7 @@ class VelocityOnPolicyRunner(MjlabOnPolicyRunner):
       self.export_policy_to_onnx(str(policy_dir), filename)
       is_wandb = isinstance(self.logger.writer, WandbLogWriter)
       run_name: str = wandb.run.name if is_wandb and wandb.run else "local"  # type: ignore[assignment]
-      metadata = get_base_metadata(self.env.unwrapped, run_name)
+      metadata = self.get_policy_metadata(run_name)
       attach_metadata_to_onnx(str(onnx_path), metadata)
       if is_wandb and self.cfg["upload_model"]:
         wandb.save(str(onnx_path), base_path=str(policy_dir))

@@ -153,8 +153,8 @@ def get_go1_robot_cfg() -> EntityCfg:
   return EntityCfg(
     init_state=INIT_STATE,
     collisions=(FULL_COLLISION,),
-    spec_fn=get_spec, # 导入xml文件
-    articulation=GO1_ARTICULATION, # 导入actuator配置
+    spec_fn=get_spec,  # 导入xml文件
+    articulation=GO1_ARTICULATION,  # 导入actuator配置
   )
 
 
@@ -170,8 +170,6 @@ for a in GO1_ARTICULATION.actuators:
 
 
 if __name__ == "__main__":
-  import mujoco.viewer as viewer
-
   from mjlab.entity.entity import Entity
 
   robot = Entity(get_go1_robot_cfg())

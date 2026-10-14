@@ -141,8 +141,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   observations = {
     "actor": ObservationGroupCfg(
       terms=actor_terms,
-      concatenate_terms=True, #输出一个扁平化的向量，而不是一个字典
-      enable_corruption=True, #噪声注入开启
+      concatenate_terms=True,  # 输出一个扁平化的向量，而不是一个字典
+      enable_corruption=True,  # 噪声注入开启
     ),
     "critic": ObservationGroupCfg(
       terms=critic_terms,
@@ -182,7 +182,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     "twist": UniformVelocityCommandCfg(
       entity_name="robot",
       resampling_time_range=(3.0, 8.0),
-      rel_standing_envs=0.1, #10%的概率执行站立指令
+      rel_standing_envs=0.1,  # 10%的概率执行站立指令
       rel_heading_envs=0.3,
       rel_forward_envs=0.2,
       heading_command=True,

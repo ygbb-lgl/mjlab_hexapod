@@ -239,7 +239,7 @@ for a in HEXAPOD_ARTICULATION.actuators:
   names = a.target_names_expr
   assert e is not None
   for n in names:
-    HEXAPOD_ACTION_SCALE[n] = 0.25 
+    HEXAPOD_ACTION_SCALE[n] = 0.25
 
 
 if __name__ == "__main__":
