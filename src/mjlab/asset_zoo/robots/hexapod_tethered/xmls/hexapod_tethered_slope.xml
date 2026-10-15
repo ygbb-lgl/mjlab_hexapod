@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mujoco model="hexapod tethered 22 degree slope">
+    <include file="hexapod_tethered_common.xml" />
+
+    <actuator>
+        <!-- u in [0, 2] maps through gain -200 to pulling force in [0, -400] N. -->
+        <general name="cable" tendon="cable" ctrllimited="true" ctrlrange="0 2"
+                 forcelimited="true" forcerange="-400 0" gainprm="-200"
+                 biasprm="0" />
+    </actuator>
+</mujoco>

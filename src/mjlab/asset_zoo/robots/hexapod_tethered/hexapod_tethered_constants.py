@@ -1,5 +1,6 @@
 """Tethered Hexapod robot constants."""
 
+import math
 from pathlib import Path
 
 import mujoco
@@ -28,7 +29,26 @@ HEXAPOD_TETHERED_XML: Path = (
   / "hexapod_tethered.xml"
 )
 assert HEXAPOD_TETHERED_XML.exists()
+HEXAPOD_TETHERED_SLOPE_XML: Path = (
+  MJLAB_SRC_PATH
+  / "asset_zoo"
+  / "robots"
+  / "hexapod_tethered"
+  / "xmls"
+  / "hexapod_tethered_slope.xml"
+)
+assert HEXAPOD_TETHERED_SLOPE_XML.exists()
 HEXAPOD_TETHERED_ASSET_DIR = HEXAPOD_TETHERED_XML.parent / "assets"
+
+SLOPE_ANGLE_DEG = 22.0
+SLOPE_ANGLE_RAD = math.radians(SLOPE_ANGLE_DEG)
+SLOPE_PITCH_RAD = -SLOPE_ANGLE_RAD
+SLOPE_ROOT_QUAT = (
+  math.cos(SLOPE_ANGLE_RAD / 2.0),
+  0.0,
+  -math.sin(SLOPE_ANGLE_RAD / 2.0),
+  0.0,
+)
 
 ARM_BODY_NAME = "ARM"
 ARM_JOINT_NAME = "ARM_JOINT"
@@ -38,11 +58,23 @@ TETHER_END_SITE_NAME = "tether_7"
 TETHER_FORCE_SENSOR_NAME = "cable_tendonactuatorfrc"
 
 
-def get_spec() -> mujoco.MjSpec:
-  """Load a fresh tethered robot specification with exportable mesh buffers."""
-  spec = mujoco.MjSpec.from_file(str(HEXAPOD_TETHERED_XML))
+def _load_spec(xml_path: Path) -> mujoco.MjSpec:
+  """Load one tethered robot variant with exportable mesh buffers."""
+  spec = mujoco.MjSpec.from_file(str(xml_path))
   for asset_path in sorted(HEXAPOD_TETHERED_ASSET_DIR.glob("*.STL")):
     spec.assets[f"assets/{asset_path.name}"] = asset_path.read_bytes()
+  return spec
+
+
+def get_spec() -> mujoco.MjSpec:
+  """Load a fresh flat-ground tethered robot specification."""
+  return _load_spec(HEXAPOD_TETHERED_XML)
+
+
+def get_slope_spec() -> mujoco.MjSpec:
+  """Load the 22-degree slope robot with its independent cable force limit."""
+  spec = _load_spec(HEXAPOD_TETHERED_SLOPE_XML)
+  spec.body("trunk").quat[:] = SLOPE_ROOT_QUAT
   return spec
 
 
@@ -109,6 +141,13 @@ INIT_STATE = EntityCfg.InitialStateCfg(
   joint_vel={r".*": 0.0},
 )
 
+SLOPE_INIT_STATE = EntityCfg.InitialStateCfg(
+  pos=(0.0, 0.0, 0.313),
+  rot=SLOPE_ROOT_QUAT,
+  joint_pos={**INIT_JOINT_POS, ARM_JOINT_NAME: 0.0},
+  joint_vel={r".*": 0.0},
+)
+
 # The XML-defined cable actuator stays in XML so its -200 N/control gain remains
 # the single source of truth.
 HEXAPOD_TETHERED_ARTICULATION = EntityArticulationInfoCfg(
@@ -136,6 +175,16 @@ def get_hexapod_tethered_robot_cfg() -> EntityCfg:
   )
 
 
+def get_hexapod_tethered_slope_robot_cfg() -> EntityCfg:
+  """Get the independently loaded tethered robot for the fixed slope task."""
+  return EntityCfg(
+    init_state=SLOPE_INIT_STATE,
+    collisions=(FULL_COLLISION,),
+    spec_fn=get_slope_spec,
+    articulation=HEXAPOD_TETHERED_ARTICULATION,
+  )
+
+
 HEXAPOD_TETHERED_ACTION_SCALE = {
   r".*_HAA": 0.25,
   r".*_HFE": 0.25,
@@ -149,14 +198,20 @@ __all__ = [
   "FOOT_SITE_NAMES",
   "HEXAPOD_TETHERED_ACTION_SCALE",
   "HEXAPOD_TETHERED_ARTICULATION",
+  "HEXAPOD_TETHERED_SLOPE_XML",
   "HEXAPOD_TETHERED_XML",
   "INIT_JOINT_POS",
   "JOINT_AXIS_SIGNS",
   "JOINT_NAMES",
   "LEG_NAMES",
+  "SLOPE_ANGLE_DEG",
+  "SLOPE_ANGLE_RAD",
+  "SLOPE_PITCH_RAD",
+  "SLOPE_ROOT_QUAT",
   "TETHER_ANCHOR_SITE_NAME",
   "TETHER_END_SITE_NAME",
   "TETHER_FORCE_SENSOR_NAME",
   "TETHER_TENDON_NAME",
   "get_hexapod_tethered_robot_cfg",
+  "get_hexapod_tethered_slope_robot_cfg",
 ]

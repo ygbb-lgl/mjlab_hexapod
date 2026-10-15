@@ -113,6 +113,20 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
 
   log_root_path = log_dir.parent  # Go up from specific run dir to experiment dir.
 
+  if cfg.agent.resume and cfg.agent.pretrained_checkpoint is not None:
+    raise ValueError(
+      "--agent.resume and --agent.pretrained-checkpoint are mutually exclusive: "
+      "resume restores a run, while pretrained-checkpoint starts a new one"
+    )
+
+  pretrained_path: Path | None = None
+  if cfg.agent.pretrained_checkpoint is not None:
+    pretrained_path = Path(cfg.agent.pretrained_checkpoint).expanduser().resolve()
+    if not pretrained_path.is_file():
+      raise FileNotFoundError(
+        f"Pretrained checkpoint does not exist: {pretrained_path}"
+      )
+
   resume_path: Path | None = None
   if cfg.agent.resume:
     if cfg.wandb_run_path is not None:
@@ -171,6 +185,9 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
   if resume_path is not None:
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
     runner.load(str(resume_path))
+  elif pretrained_path is not None:
+    print(f"[INFO]: Warm-starting actor from: {pretrained_path}")
+    runner.load_pretrained(str(pretrained_path), map_location=device)
 
   runner.learn(
     num_learning_iterations=cfg.agent.max_iterations, init_at_random_ep_len=True

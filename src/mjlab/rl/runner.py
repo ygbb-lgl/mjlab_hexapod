@@ -131,11 +131,47 @@ class MjlabOnPolicyRunner(OnPolicyRunner):
     if "log_std" in actor_sd:
       actor_sd["distribution.log_std_param"] = actor_sd.pop("log_std")
 
+    if load_cfg is not None and load_cfg.get("pretrained", False):
+      loaded_dict["actor_state_dict"] = self._prepare_pretrained_actor_state(actor_sd)
+
     load_iteration = self.alg.load(loaded_dict, load_cfg, strict)
     if load_iteration:
       self.current_learning_iteration = loaded_dict["iter"]
 
     infos = loaded_dict["infos"]
-    if infos and "env_state" in infos:
+    restore_env_state = load_cfg is None or load_cfg.get("env_state", True)
+    if restore_env_state and infos and "env_state" in infos:
       self.env.unwrapped.common_step_counter = infos["env_state"]["common_step_counter"]
     return infos
+
+  def load_pretrained(
+    self,
+    path: str,
+    *,
+    strict: bool = True,
+    map_location: str | None = None,
+  ) -> dict:
+    """Warm-start an actor without restoring the previous training state."""
+    infos = self.load(
+      path,
+      load_cfg={
+        "actor": True,
+        "critic": False,
+        "optimizer": False,
+        "iteration": False,
+        "rnd": False,
+        "env_state": False,
+        "pretrained": True,
+      },
+      strict=strict,
+      map_location=map_location,
+    )
+    self.current_learning_iteration = 0
+    self.env.unwrapped.common_step_counter = 0
+    return infos
+
+  def _prepare_pretrained_actor_state(
+    self, actor_state_dict: dict[str, torch.Tensor]
+  ) -> dict[str, torch.Tensor]:
+    """Allow task runners to adapt an actor checkpoint before warm-starting."""
+    return actor_state_dict

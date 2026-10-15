@@ -11,6 +11,9 @@ from mjlab.asset_zoo.robots.hexapod_tethered.hexapod_tethered_constants import (
 from mjlab.asset_zoo.robots.hexapod_tethered.hexapod_tethered_constants import (
   get_hexapod_tethered_robot_cfg as get_hexapod_tethered_robot_cfg,
 )
+from mjlab.asset_zoo.robots.hexapod_tethered.hexapod_tethered_constants import (
+  get_hexapod_tethered_slope_robot_cfg as get_hexapod_tethered_slope_robot_cfg,
+)
 from mjlab.asset_zoo.robots.i2rt_yam.yam_constants import (
   YAM_ACTION_SCALE as YAM_ACTION_SCALE,
 )

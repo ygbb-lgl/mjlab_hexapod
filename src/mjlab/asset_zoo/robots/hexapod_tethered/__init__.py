@@ -6,3 +6,6 @@ from .hexapod_tethered_constants import (
 from .hexapod_tethered_constants import (
   get_hexapod_tethered_robot_cfg as get_hexapod_tethered_robot_cfg,
 )
+from .hexapod_tethered_constants import (
+  get_hexapod_tethered_slope_robot_cfg as get_hexapod_tethered_slope_robot_cfg,
+)

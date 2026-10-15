@@ -112,6 +112,14 @@ class RslRlBaseRunnerCfg:
   """Tags for the wandb run. Default is empty tuple."""
   resume: bool = False
   """Whether to resume the experiment. Default is False."""
+  pretrained_checkpoint: str | None = None
+  """Optional local checkpoint used to warm-start the actor only.
+
+  Unlike :attr:`resume`, this starts a new training run with a fresh critic,
+  optimizer, iteration counter, and environment curriculum state. Task-specific
+  runners may additionally reset outputs that have different semantics in the
+  target task.
+  """
   load_run: str = ".*"
   """The run directory to load. Default is ".*" which means all runs. If regex
   expression, the latest (alphabetical order) matching run will be loaded.

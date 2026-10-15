@@ -2,6 +2,8 @@
 
 import math
 
+import torch
+
 from mjlab.asset_zoo.robots.hexapod_tethered.hexapod_tethered_constants import (
   ARM_JOINT_NAME,
   TETHER_ANCHOR_SITE_NAME,
@@ -21,6 +23,10 @@ from .env_cfgs import (
   TETHER_ACTION_NAME,
   TETHER_FORCE_PER_ACTION,
 )
+
+PRETRAINED_CABLE_ACTION_MEAN = 0.1
+PRETRAINED_CABLE_ACTION_STD = 0.2
+PRETRAINED_TENSION_NORMALIZER_STD = 200.0
 
 
 def get_tethered_policy_metadata(
@@ -77,6 +83,169 @@ def get_tethered_policy_metadata(
 
 class TetheredVelocityOnPolicyRunner(VelocityOnPolicyRunner):
   """Export leg metadata separately from the passive ARM and cable action."""
+
+  def load_pretrained(
+    self,
+    path: str,
+    *,
+    strict: bool = True,
+    map_location: str | None = None,
+  ) -> dict:
+    """Transfer a flat tethered actor while resetting slope-only cable state."""
+    infos = super().load_pretrained(
+      path,
+      strict=strict,
+      map_location=map_location,
+    )
+    tension_index = self._observation_term_start("critic", "cable_tension")
+    normalizer = self.alg.critic.obs_normalizer
+    normalizer_state = normalizer.state_dict()
+    values = {
+      "_mean": 0.0,
+      "_var": PRETRAINED_TENSION_NORMALIZER_STD**2,
+      "_std": PRETRAINED_TENSION_NORMALIZER_STD,
+    }
+    if all(key in normalizer_state for key in values):
+      for key, value in values.items():
+        normalizer_state[key][:, tension_index] = value
+      normalizer.load_state_dict(normalizer_state)
+    return infos
+
+  def _prepare_pretrained_actor_state(
+    self, actor_state_dict: dict[str, torch.Tensor]
+  ) -> dict[str, torch.Tensor]:
+    """Keep the learned gait while making cable exploration safe on the slope."""
+    prepared = {key: value.clone() for key, value in actor_state_dict.items()}
+    reference = self.alg.get_policy().state_dict()
+    action_dim = sum(self.env.unwrapped.action_manager.action_term_dim)
+    obs_shape = self.env.unwrapped.observation_manager.group_obs_dim["actor"]
+    assert isinstance(obs_shape, tuple)
+    obs_dim = math.prod(obs_shape)
+
+    output_weight_key = self._find_linear_weight(
+      reference,
+      output_size=action_dim,
+    )
+    input_weight_key = self._find_linear_weight(
+      reference,
+      input_size=obs_dim,
+    )
+    output_bias_key = output_weight_key.removesuffix("weight") + "bias"
+    required = (output_weight_key, output_bias_key, input_weight_key)
+    if any(key not in prepared for key in required):
+      raise ValueError(
+        "The pretrained checkpoint is not a compatible tethered Hexapod actor; "
+        "expected the same 71-observation, 19-action network"
+      )
+    for key in required:
+      if prepared[key].shape != reference[key].shape:
+        raise ValueError(
+          "The pretrained checkpoint is not a compatible tethered Hexapod actor; "
+          f"{key} has shape {tuple(prepared[key].shape)}, expected "
+          f"{tuple(reference[key].shape)}"
+        )
+
+    cable_index = self._action_term_start(TETHER_ACTION_NAME)
+    prepared[output_weight_key][cable_index].zero_()
+    prepared[output_bias_key][cable_index] = PRETRAINED_CABLE_ACTION_MEAN
+
+    last_cable_action_index = (
+      self._observation_term_start("actor", "actions") + cable_index
+    )
+    tension_index = self._observation_term_start("actor", "cable_tension")
+    prepared[input_weight_key][:, last_cable_action_index].zero_()
+    prepared[input_weight_key][:, tension_index].zero_()
+
+    if "distribution.std_param" in prepared:
+      prepared["distribution.std_param"][cable_index] = PRETRAINED_CABLE_ACTION_STD
+    elif "distribution.log_std_param" in prepared:
+      prepared["distribution.log_std_param"][cable_index] = math.log(
+        PRETRAINED_CABLE_ACTION_STD
+      )
+    else:
+      raise ValueError("Pretrained tethered actor has no Gaussian std parameter")
+
+    self._reset_actor_normalizer_dimension(
+      prepared,
+      last_cable_action_index,
+      std=1.0,
+    )
+    self._reset_actor_normalizer_dimension(
+      prepared,
+      tension_index,
+      std=PRETRAINED_TENSION_NORMALIZER_STD,
+    )
+    return prepared
+
+  @staticmethod
+  def _find_linear_weight(
+    state_dict: dict[str, torch.Tensor],
+    *,
+    input_size: int | None = None,
+    output_size: int | None = None,
+  ) -> str:
+    matches = []
+    for key, value in state_dict.items():
+      if not key.startswith("mlp.") or not key.endswith(".weight"):
+        continue
+      if value.ndim != 2:
+        continue
+      if input_size is not None and value.shape[1] != input_size:
+        continue
+      if output_size is not None and value.shape[0] != output_size:
+        continue
+      matches.append(key)
+    if len(matches) != 1:
+      raise ValueError(
+        "Could not uniquely identify the pretrained actor linear layer: "
+        f"found {matches}"
+      )
+    return matches[0]
+
+  def _action_term_start(self, term_name: str) -> int:
+    start = 0
+    manager = self.env.unwrapped.action_manager
+    for name, dimension in zip(
+      manager.active_terms,
+      manager.action_term_dim,
+      strict=True,
+    ):
+      if name == term_name:
+        if dimension != 1:
+          raise ValueError(f"Action term {term_name!r} must be scalar")
+        return start
+      start += dimension
+    raise ValueError(f"Action term {term_name!r} is not active")
+
+  def _observation_term_start(self, group_name: str, term_name: str) -> int:
+    manager = self.env.unwrapped.observation_manager
+    start = 0
+    for name, shape in zip(
+      manager.active_terms[group_name],
+      manager.group_obs_term_dim[group_name],
+      strict=True,
+    ):
+      if name == term_name:
+        return start
+      start += math.prod(shape)
+    raise ValueError(f"Observation term {term_name!r} is not active in {group_name!r}")
+
+  @staticmethod
+  def _reset_actor_normalizer_dimension(
+    state_dict: dict[str, torch.Tensor],
+    index: int,
+    *,
+    std: float,
+  ) -> None:
+    values = {
+      "obs_normalizer._mean": 0.0,
+      "obs_normalizer._var": std**2,
+      "obs_normalizer._std": std,
+    }
+    for key, value in values.items():
+      if key not in state_dict:
+        raise ValueError(f"Pretrained tethered actor is missing {key}")
+      state_dict[key][:, index] = value
 
   def get_policy_metadata(self, run_name: str) -> dict[str, list | str | float]:
     metadata = get_tethered_policy_metadata(self.env.unwrapped, run_name)

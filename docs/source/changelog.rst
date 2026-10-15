@@ -12,9 +12,29 @@ Added
   robot asset. Its shared 19-output policy coordinates 18 leg targets with a
   cable command, uses a 71-entry actor with a sensor-reconstructible
   trunk-frame tether direction, and trains against a 110-entry asymmetric
-  critic. The XML cable gain maps the final action to 0--400 N of pulling
-  force, the four tether rewards retain their Playground scales, and its PPO
-  configuration is owned independently for task-specific tuning.
+  critic. Its XML limits the cable to ``0.0001 N`` of pulling force, making the
+  flat task effectively force-free, while its four flat tether rewards retain
+  their Playground scales. Its PPO configuration is owned independently for
+  task-specific tuning.
+
+- Added ``Mjlab-Velocity-Slope-Hexapod-Tethered`` on a fixed 22-degree plane.
+  Its independent XML reuses the common meshes while mapping the final action
+  to 0--400 N of pulling tension. It preserves the flat tethered task's
+  71-entry actor, 110-entry critic, and 19-entry action interface, and adds
+  ``tether_work_assist=0.5``, ``tether_eng_steep=0.5``,
+  ``tether_slack_penalty=-1.0``, and ``tether_overload=-2.0``. Its PPO class is
+  independent from the flat runner so its settings can be tuned separately.
+  Slope-only foot-clearance and swing-height costs use distance along the
+  measured surface normal, while foot slip uses velocity in the surface
+  tangent plane; the flat task and all inherited locomotion scales are unchanged.
+  The slope episode now terminates once the trunk's world-X position plus
+  ``0.3 m`` strictly passes the randomized anchor's world-X position.
+
+- Added ``--agent.pretrained-checkpoint`` for actor-only transfer learning.
+  It starts a new run without restoring the critic, optimizer, PPO iteration,
+  or environment curriculum state. The tethered runner additionally preserves
+  all 18 leg outputs while safely reinitializing the cable output and its
+  task-specific observation-normalization state.
 
 - Added independent startup randomization of every Hexapod body mass by
   0.9--1.3 and every actuated joint armature by 1.0--1.05.
@@ -28,6 +48,13 @@ Added
 
 Changed
 ^^^^^^^
+
+- Recalibrated the fixed-slope tether rewards for MJLab's unclipped signed
+  reward sum, gated assistance on commands directed toward the anchor, reduced
+  the slope learning rate to ``3e-4``, and added a slope-local command curriculum
+  at iterations 0, 3000, and 6000. Velocity pushes begin after a 1000-iteration
+  warm-up, initial yaw remains near the world-``+X`` uphill direction, and fall
+  detection is now relative to the slope normal.
 
 - The ``Hexapod-Tethered`` task now applies an independent global observation
   noise level of ``1.5`` to all actor sensor-noise scales, including cable

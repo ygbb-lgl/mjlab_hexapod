@@ -152,6 +152,57 @@ def test_runner_handles_old_checkpoints_without_env_state(env, device):
     assert wrapped_env.unwrapped.common_step_counter == 999
 
 
+def test_pretrained_load_only_restores_actor_and_resets_progress(env, device) -> None:
+  """Warm-starting must not inherit critic, optimizer, or curriculum state."""
+  wrapped_env = RslRlVecEnvWrapper(env)
+  agent_cfg = RslRlOnPolicyRunnerCfg(
+    num_steps_per_env=4,
+    max_iterations=10,
+    save_interval=5,
+  )
+
+  with tempfile.TemporaryDirectory() as tmpdir:
+    source = MjlabOnPolicyRunner(
+      wrapped_env,
+      asdict(agent_cfg),
+      log_dir=tmpdir,
+      device=device,
+    )
+    with torch.no_grad():
+      for parameter in source.alg.actor.parameters():
+        parameter.fill_(0.25)
+      for parameter in source.alg.critic.parameters():
+        parameter.fill_(0.75)
+
+    checkpoint = source.alg.save()
+    checkpoint["iter"] = 321
+    checkpoint["infos"] = {"env_state": {"common_step_counter": 7654}}
+    checkpoint_path = str(Path(tmpdir) / "pretrained.pt")
+    torch.save(checkpoint, checkpoint_path)
+
+    target = MjlabOnPolicyRunner(
+      wrapped_env,
+      asdict(agent_cfg),
+      log_dir=tmpdir,
+      device=device,
+    )
+    critic_before = {
+      key: value.clone() for key, value in target.alg.critic.state_dict().items()
+    }
+    target.current_learning_iteration = 99
+    wrapped_env.unwrapped.common_step_counter = 88
+
+    target.load_pretrained(checkpoint_path, map_location=device)
+
+    for key, value in source.alg.actor.state_dict().items():
+      torch.testing.assert_close(target.alg.actor.state_dict()[key], value)
+    for key, value in critic_before.items():
+      torch.testing.assert_close(target.alg.critic.state_dict()[key], value)
+    assert target.alg.optimizer.state == {}
+    assert target.current_learning_iteration == 0
+    assert wrapped_env.unwrapped.common_step_counter == 0
+
+
 @pytest.mark.filterwarnings("ignore::DeprecationWarning")
 def test_export_policy_to_onnx(env, device):
   """runner.export_policy_to_onnx() produces a valid ONNX file."""

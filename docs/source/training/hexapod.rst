@@ -8,7 +8,7 @@ model's 18-joint order, its XML-default joint pose, a
 ``RM+LF+LB``. The gait clock is internal to the contact-pattern reward and is
 not part of the policy observation.
 
-Two flat-ground tasks are registered:
+Three Hexapod tasks are registered:
 
 ``Mjlab-Velocity-Flat-Hexapod``
    Flat-ground training for the new alternating-tripod gait configuration.
@@ -16,6 +16,10 @@ Two flat-ground tasks are registered:
 ``Mjlab-Velocity-Flat-Hexapod-Tethered``
    The same locomotion task and scales, with a passive shoulder, spatial tendon,
    and one additional policy output for coordinated cable tension control.
+
+``Mjlab-Velocity-Slope-Hexapod-Tethered``
+   The tethered policy interface on a fixed 22-degree plane, with an active
+   0--400 N pulling range and four additional slope-specific tether rewards.
 
 Policy interface
 ----------------
@@ -30,7 +34,8 @@ each leg as ``HAA, HFE, KFE``. The actor uses 66 entries:
 During training, uniform actor-observation noise follows the Playground-style
 ``level * scale`` convention. ``OBSERVATION_NOISE_LEVEL`` defaults to ``1.5``;
 the scales for linear velocity, angular velocity, gravity, joint position, and
-joint velocity are ``0.1``, ``0.2``, ``0.1``, ``0.05``, and ``1.5`` respectively.
+joint velocity are ``0.1``, ``0.2``, ``0.05``, ``0.05``, and ``1.5``
+respectively.
 Setting the level to ``0.0`` disables these noise terms. The critic and play
 configuration remain noise-free.
 
@@ -45,14 +50,17 @@ axis is ``(0, 0, -1)``, the conversion is
 applied before reconstruction so the observation remains unit length.
 
 Its action is ``joint_target[18], cable[1]``. The cable action is clipped to
-``[0, 2]`` and the XML gain of ``-200`` converts it to ``[0, -400] N``;
-negative MuJoCo actuator force is pulling, while the policy observes the
-corresponding non-negative tension. The tethered task keeps MJLab's observation
-noise and encoder-bias randomization, except that the projected-gravity noise
-scale is ``0.05``. It does not globally clip policy outputs; only the cable term
-is physically clipped to ``[0, 2]``. The action-history term uses MJLab's
-standard ``last_action`` timing. Checkpoints trained with the previous 70-entry
-angle layout are not compatible with this 71-entry policy and must be retrained.
+``[0, 2]``. The flat XML limits pulling force to only ``0.0001 N``, so that task
+is effectively force-free even though the actuator gain remains ``-200``. The
+independent slope XML instead allows ``[-400, 0] N``: the gain maps cable action
+``[0, 2]`` to ``[0, -400] N``. Negative MuJoCo actuator force is pulling, while
+the policy observes the corresponding non-negative tension. Both tethered tasks
+keep MJLab's observation noise and encoder-bias randomization; the
+projected-gravity noise scale is ``0.05``. They do not globally clip policy
+outputs; only the cable term is physically clipped to ``[0, 2]``. The
+action-history term uses MJLab's standard ``last_action`` timing. Checkpoints
+trained with the previous 70-entry angle layout are not compatible with this
+71-entry policy and must be retrained.
 
 The tethered critic has 110 entries. Its first 71 entries use the actor layout
 with clean, unbiased state values. It keeps the independent Hexapod's foot
@@ -89,25 +97,94 @@ Train or play the tethered policy with:
      --checkpoint-file \
      logs/rsl_rl/hexapod_tethered_velocity/<run>/model_<iteration>.pt
 
-The tethered task inherits the independent MJLab Hexapod timing: the simulator
-runs at 200 Hz (``0.005 s``) and the shared policy at 50 Hz (four physics steps
-per policy action). At every reset, the world-frame tether anchor is sampled
-uniformly from ``x in [-10, 10] m``, ``y in [-5, 5] m``, and
-``z in [0.1, 0.5] m``; the XML position ``(5, 0, 2) m`` is only the model
-default before the reset event runs.
+Train or play the fixed-slope policy with:
 
-On a level-only training task, ``tether_flat_penalty=-3`` intentionally makes
-the useful solution keep the cable slack. The uphill and slack terms become
-active only when the body-tilt proxy crosses roughly ``0.30 rad``. A policy
-that learns sustained adaptive uphill pulling therefore also needs a later
-slope/terrain task; this flat migration primarily validates the 19-D control
-interface, tension sensing, and leg--tether coordination path.
+.. code-block:: bash
+
+   uv run train Mjlab-Velocity-Slope-Hexapod-Tethered \
+     --env.scene.num-envs 1024 --agent.logger wandb \
+     --agent.upload-model False --agent.run-name tether_slope_22deg_v1 \
+     --agent.pretrained-checkpoint \
+     /absolute/path/to/flat_tethered/model_<iteration>.pt
+   uv run play Mjlab-Velocity-Slope-Hexapod-Tethered \
+     --checkpoint-file \
+     logs/rsl_rl/hexapod_tethered_slope_velocity/<run>/model_<iteration>.pt
+
+``--agent.pretrained-checkpoint`` is transfer learning, not resume. The source
+must be a ``Flat-Hexapod-Tethered`` checkpoint with the same 71 observations and
+19 actions. It loads the learned actor and observation statistics, keeps all 18
+leg outputs, and reinitializes the cable output to a mean action of ``0.1`` and
+a standard deviation of ``0.2``. The critic, optimizer, PPO iteration, and
+``common_step_counter`` start from zero, so the slope command curriculum starts
+at its first stage. Use ``--agent.resume True`` only to continue an interrupted
+slope run; the two options are intentionally mutually exclusive.
+
+Both tethered tasks inherit the independent MJLab Hexapod timing: the simulator
+runs at 200 Hz (``0.005 s``) and the shared policy at 50 Hz (four physics steps
+per policy action). On the flat task, the world-frame tether anchor is sampled
+at every reset from ``x in [-10, 10] m``, ``y in [-5, 5] m``, and
+``z in [0.1, 0.5] m``. On the slope, its local horizontal coordinates are
+sampled from ``x in [3, 13] m`` and ``y in [-2, 2] m``, with a normal distance
+of ``[0, 0.3] m`` above the plane. The XML position ``(5, 0, 2) m`` is only the
+model default before the reset event runs. This last range is signed distance
+along the upward slope normal, rather than world-Z height, so it never samples
+below the plane. A slope episode terminates when
+``trunk_x + 0.3 > anchor_x`` in world coordinates; equality alone does not
+trigger the condition.
+
+On the level task, ``tether_flat_penalty=-3`` intentionally makes the useful
+solution keep the cable slack. Its ``0.0001 N`` force cap makes this task useful
+for validating the 19-D interface without learning meaningful traction.
+
+The slope task rotates the plane and initial trunk pose by 22 degrees, with
+uphill along world ``+X``. Its robot XML includes the same common model and STL
+meshes as the flat asset but owns the wider cable force range. It preserves the
+flat task's 71-entry actor, 110-entry critic, and 19-entry action interface. Its
+PPO class also owns independent actor, critic, algorithm, and runner settings,
+although their initial values match the flat configuration.
+
+The slope task separately overrides four terrain-sensitive measurements while
+retaining the flat reward weights. ``upright`` uses the terrain normal estimated
+by ``foot_height_scan`` instead of world vertical. ``foot_clearance`` and
+``foot_swing_height`` use the center ray under each foot and measure the
+foot-to-hit displacement along that ray's surface normal. ``foot_slip`` removes
+the normal component of the foot velocity and penalizes the remaining velocity
+in the surface tangent plane. The flat task continues to use the generic
+world-Z height and world-XY slip functions.
+
+The fixed-slope task disables the flat-only tension proxy terms and retains a
+``tether_action_rate`` weight of ``-0.1``. It uses the following
+Playground-derived kernels with scales recalibrated for MJLab's signed reward
+sum:
+
+- ``tether_work_assist=0.5`` rewards positive tether power;
+- ``tether_eng_steep=0.5`` rewards reaching the slope-dependent target tension;
+- ``tether_slack_penalty=-1.0`` penalizes tension below ``15 N``; and
+- ``tether_overload=-2.0`` penalizes tension above ``250 N``.
+
+The first three terms are active only when the planar velocity command points
+toward the anchor. Overload protection is always active. This prevents standing
+and downhill commands from learning a permanent cable load. Tension mean, P95,
+slack fraction, overload fraction, cable action statistics, and action-limit
+saturation fractions are logged to W&B under ``Metrics/``.
 
 Like the Go1 task, the independent Hexapod task leaves policy actions unclipped
-and saves a checkpoint every 500 iterations. The command curriculum starts at
-``vx in [-0.3, 0.3] m/s``, ``vy in [-0.2, 0.2] m/s``, and
-``yaw in [-0.25, 0.25] rad/s``; expand these only after the contact-pattern and
-velocity-tracking curves have stabilized.
+and saves a checkpoint every 500 iterations. The slope-local command curriculum
+uses its own zeroed ``common_step_counter`` after transfer:
+
+- iteration 0: ``vx=[0.05, 0.3]``, ``vy=[-0.05, 0.05]``,
+  ``yaw=[-0.1, 0.1]``;
+- iteration 3000: ``vx=[0.0, 0.5]``, ``vy=[-0.2, 0.2]``,
+  ``yaw=[-0.25, 0.25]``; and
+- iteration 6000: ``vx=[-0.8, 0.8]``, ``vy=[-0.5, 0.5]``,
+  ``yaw=[-0.8, 0.8]``.
+
+The slope PPO learning rate is ``3e-4``. Random velocity pushes are suppressed
+for the first 1000 iterations and then use the standard Hexapod disturbance
+range. At reset, initial yaw is limited to ``[-0.15, 0.15] rad`` around world
+``+X`` so the first forward-only curriculum stage actually points uphill toward
+the anchor. Fall termination compares trunk up with the 22-degree surface
+normal, not world vertical.
 
 Every saved checkpoint also produces an ONNX policy in the run directory. Its
 metadata records joint order, default pose, action scale, and observation layout.
