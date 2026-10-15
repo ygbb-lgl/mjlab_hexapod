@@ -224,13 +224,26 @@ range. At reset, initial yaw is limited to ``[-0.15, 0.15] rad`` around world
 symmetric negative commands train downhill motion. Fall termination compares
 trunk up with the 22-degree surface normal, not world vertical.
 
-The slope-mixture task reuses the fixed-slope XML and its 0--400 N cable; it
-does not introduce another robot model. At each episode reset it gives every
-parallel environment its own plane quaternion about world ``Y``. Positive
-angles make world ``+X`` uphill. The plane is sampled once per episode and does
-not rotate underneath the robot. Root pose and anchor height are rebuilt from
-that environment's angle while preserving the fixed-slope model's nominal
-terrain-normal clearance.
+The slope-mixture task reuses the fixed-slope XML, its 0--400 N cable, and its
+60 N m leg actuators, but owns a separate neutral initial-state configuration.
+It therefore does not inherit the fixed task's hard-coded 22-degree root pose.
+At each episode reset it gives every parallel environment its own plane rotation
+about world ``Y``. The mixture scene marks the terrain body as mocap, and the
+reset event writes its per-environment position and quaternion. The normal
+forward-kinematics path therefore gives collision, ray casting, and
+visualization the same plane pose without expanding the complete model
+``geom_quat`` table. Each plane rotates about that environment's spawn origin
+instead of the global origin. Positive angles make world ``+X`` uphill. The
+plane is sampled once per episode and does not rotate underneath the robot.
+
+Mixture initialization uses an orthonormal terrain frame. ``pose_range.x`` is
+the displacement along the uphill tangent, ``pose_range.y`` is the lateral
+displacement, and ``pose_range.z`` is the displacement along the surface
+normal. The nominal root normal height remains ``0.313 m`` at every angle.
+Anchor ``x_range`` is likewise an along-slope distance and
+``normal_height_range`` is a true normal distance. This avoids the
+``tan(angle)``/``cos(angle)`` growth that would otherwise move the robot and
+anchor increasingly far away as the curriculum approaches 60 degrees.
 
 The relative mixture slope curriculum is:
 
@@ -245,13 +258,20 @@ actual per-environment plane angle or normal. All reward weights remain exactly
 the fixed-slope weights. W&B logs the sampled slope mean/min/max and the
 slope-dependent target tension.
 
-The command curriculum is deliberately not restarted at every 6000-iteration
-slope boundary. Mixture owns an explicit copy of the same velocity curriculum
-as flat and fixed slope at relative iterations 0, 3000, and 7000. It reaches
-``vx=[-0.8, 0.8]``, ``vy=[-0.5, 0.5]``, and ``yaw=[-0.8, 0.8]`` once and then
-keeps those ranges while the slope distribution continues expanding. The
-mixture PPO configuration is independent of the fixed-slope class and uses
-``learning_rate=2e-4``, ``entropy_coef=0.005``, and ``desired_kl=0.008``.
+Mixture uses a nested command curriculum. Inside each 6000-iteration slope
+block it explicitly repeats the following three stages:
+
+- relative iterations 0--1999: ``vx=[-0.3, 0.3]``, ``vy=[-0.2, 0.2]``,
+  ``yaw=[-0.25, 0.25]``;
+- relative iterations 2000--3999: ``vx=[-0.5, 0.5]``, ``vy=[-0.3, 0.3]``,
+  ``yaw=[-0.4, 0.4]``; and
+- relative iterations 4000--5999: ``vx=[-0.8, 0.8]``, ``vy=[-0.5, 0.5]``,
+  ``yaw=[-0.8, 0.8]``.
+
+The ramp therefore restarts at iterations 0, 6000, 12000, and 18000 as the
+angle range expands. The mixture PPO configuration is independent of the
+fixed-slope class and uses ``learning_rate=2e-4``, ``entropy_coef=0.005``, and
+``desired_kl=0.008``.
 
 Every saved checkpoint also produces an ONNX policy in the run directory. Its
 metadata records joint order, default pose, action scale, and observation layout.

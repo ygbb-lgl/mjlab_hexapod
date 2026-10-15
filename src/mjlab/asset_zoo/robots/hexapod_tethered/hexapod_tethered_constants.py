@@ -43,6 +43,7 @@ HEXAPOD_TETHERED_ASSET_DIR = HEXAPOD_TETHERED_XML.parent / "assets"
 SLOPE_ANGLE_DEG = 22.0
 SLOPE_ANGLE_RAD = math.radians(SLOPE_ANGLE_DEG)
 SLOPE_PITCH_RAD = -SLOPE_ANGLE_RAD
+SLOPE_MIXTURE_ROOT_HEIGHT = 0.313
 SLOPE_ROOT_QUAT = (
   math.cos(SLOPE_ANGLE_RAD / 2.0),
   0.0,
@@ -75,6 +76,13 @@ def get_slope_spec() -> mujoco.MjSpec:
   """Load the 22-degree slope robot with its independent cable force limit."""
   spec = _load_spec(HEXAPOD_TETHERED_SLOPE_XML)
   spec.body("trunk").quat[:] = SLOPE_ROOT_QUAT
+  return spec
+
+
+def get_slope_mixture_spec() -> mujoco.MjSpec:
+  """Load the slope-capable robot without a fixed initial trunk pitch."""
+  spec = _load_spec(HEXAPOD_TETHERED_SLOPE_XML)
+  spec.body("trunk").pos[2] = SLOPE_MIXTURE_ROOT_HEIGHT
   return spec
 
 
@@ -191,6 +199,12 @@ SLOPE_INIT_STATE = EntityCfg.InitialStateCfg(
   joint_vel={r".*": 0.0},
 )
 
+SLOPE_MIXTURE_INIT_STATE = EntityCfg.InitialStateCfg(
+  pos=(0.0, 0.0, SLOPE_MIXTURE_ROOT_HEIGHT),
+  joint_pos={**INIT_JOINT_POS, ARM_JOINT_NAME: 0.0},
+  joint_vel={r".*": 0.0},
+)
+
 
 def _tether_actuator_cfg() -> XmlActuatorCfg:
   """Create a fresh wrapper for the XML-defined cable actuator."""
@@ -248,6 +262,16 @@ def get_hexapod_tethered_slope_robot_cfg() -> EntityCfg:
   )
 
 
+def get_hexapod_tethered_slope_mixture_robot_cfg() -> EntityCfg:
+  """Get the tethered robot with a slope-neutral randomized-slope state."""
+  return EntityCfg(
+    init_state=SLOPE_MIXTURE_INIT_STATE,
+    collisions=(FULL_COLLISION,),
+    spec_fn=get_slope_mixture_spec,
+    articulation=HEXAPOD_TETHERED_SLOPE_ARTICULATION,
+  )
+
+
 HEXAPOD_TETHERED_ACTION_SCALE = {
   r".*_HAA": 0.25,
   r".*_HFE": 0.25,
@@ -273,6 +297,7 @@ __all__ = [
   "SLOPE_ANGLE_DEG",
   "SLOPE_ANGLE_RAD",
   "SLOPE_LEG_EFFORT_LIMIT",
+  "SLOPE_MIXTURE_ROOT_HEIGHT",
   "SLOPE_PITCH_RAD",
   "SLOPE_ROOT_QUAT",
   "TETHER_ANCHOR_SITE_NAME",
@@ -280,5 +305,6 @@ __all__ = [
   "TETHER_FORCE_SENSOR_NAME",
   "TETHER_TENDON_NAME",
   "get_hexapod_tethered_robot_cfg",
+  "get_hexapod_tethered_slope_mixture_robot_cfg",
   "get_hexapod_tethered_slope_robot_cfg",
 ]

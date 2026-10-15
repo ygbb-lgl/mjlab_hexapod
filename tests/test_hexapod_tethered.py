@@ -32,7 +32,7 @@ from mjlab.envs.mdp.actions import (
 )
 from mjlab.managers.event_manager import EventTermCfg
 from mjlab.rl import RslRlVecEnvWrapper
-from mjlab.sensor import ContactSensorCfg
+from mjlab.sensor import ContactSensor, ContactSensorCfg, TerrainHeightSensor
 from mjlab.tasks.velocity import mdp as velocity_mdp
 from mjlab.tasks.velocity.config.hexapod.env_cfgs import hexapod_flat_env_cfg
 from mjlab.tasks.velocity.config.hexapod_tethered import env_cfgs as tethered_env_cfgs
@@ -67,7 +67,12 @@ from mjlab.tasks.velocity.config.hexapod_tethered.runner import (
   get_tethered_policy_metadata,
 )
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
-from mjlab.utils.lab_api.math import quat_apply, quat_from_euler_xyz, quat_mul
+from mjlab.utils.lab_api.math import (
+  matrix_from_quat,
+  quat_apply,
+  quat_from_euler_xyz,
+  quat_mul,
+)
 from mjlab.utils.noise import UniformNoiseCfg
 
 
@@ -89,6 +94,19 @@ def tethered_slope_entity() -> Entity:
 @pytest.fixture(scope="module")
 def tethered_slope_model(tethered_slope_entity: Entity) -> mujoco.MjModel:
   return tethered_slope_entity.spec.compile()
+
+
+@pytest.fixture(scope="module")
+def tethered_slope_mixture_entity() -> Entity:
+  cfg = hexapod_tethered_constants.get_hexapod_tethered_slope_mixture_robot_cfg()
+  return Entity(cfg)
+
+
+@pytest.fixture(scope="module")
+def tethered_slope_mixture_model(
+  tethered_slope_mixture_entity: Entity,
+) -> mujoco.MjModel:
+  return tethered_slope_mixture_entity.spec.compile()
 
 
 @pytest.fixture(scope="module")
@@ -188,6 +206,20 @@ def test_slope_leg_actuators_use_60_nm_limit(
 
     joint = tethered_slope_model.joint(joint_name)
     assert joint.armature[0] == pytest.approx(0.0486)
+
+
+def test_slope_mixture_asset_has_neutral_root_and_slope_force_limits(
+  tethered_slope_mixture_model: mujoco.MjModel,
+) -> None:
+  np.testing.assert_allclose(
+    tethered_slope_mixture_model.qpos0[:7],
+    (0.0, 0.0, 0.313, 1.0, 0.0, 0.0, 0.0),
+  )
+  cable = tethered_slope_mixture_model.actuator(TETHER_TENDON_NAME)
+  np.testing.assert_allclose(cable.forcerange, (-400.0, 0.0))
+  for joint_name in JOINT_NAMES:
+    actuator = tethered_slope_mixture_model.actuator(joint_name)
+    np.testing.assert_allclose(actuator.forcerange, (-60.0, 60.0))
 
 
 def test_tasks_select_their_own_leg_actuator_variant() -> None:
@@ -398,15 +430,17 @@ def test_slope_task_keeps_flat_interface_and_adds_playground_rewards() -> None:
   assert push.params["start_step"] == 1000 * 24
 
 
-def test_slope_mixture_inherits_slope_task_and_adds_relative_curricula() -> None:
+def test_slope_mixture_inherits_slope_task_and_adds_nested_curricula() -> None:
   slope_cfg = hexapod_tethered_slope_env_cfg()
   mixture_cfg = hexapod_tethered_slope_mixture_env_cfg()
 
-  assert mixture_cfg.scene.spec_fn is None
-  assert (
-    mixture_cfg.scene.entities["robot"].spec_fn
-    is slope_cfg.scene.entities["robot"].spec_fn
-  )
+  assert mixture_cfg.scene.spec_fn is tethered_env_cfgs._make_terrain_mocap
+  mixture_robot = mixture_cfg.scene.entities["robot"]
+  slope_robot = slope_cfg.scene.entities["robot"]
+  assert mixture_robot.spec_fn is hexapod_tethered_constants.get_slope_mixture_spec
+  assert mixture_robot.spec_fn is not slope_robot.spec_fn
+  assert mixture_robot.init_state.rot == (1.0, 0.0, 0.0, 0.0)
+  assert slope_robot.init_state.rot == SLOPE_ROOT_QUAT
   assert tuple(mixture_cfg.actions) == tuple(slope_cfg.actions)
   assert tuple(mixture_cfg.observations["actor"].terms) == tuple(
     slope_cfg.observations["actor"].terms
@@ -435,6 +469,9 @@ def test_slope_mixture_inherits_slope_task_and_adds_relative_curricula() -> None
       mixture_cfg.events[event_name].params["slope_event_name"]
       == SLOPE_MIXTURE_EVENT_NAME
     )
+  mixture_reset = mixture_cfg.events["reset_base"]
+  assert mixture_reset.func is events.reset_root_state_on_slope_mixture
+  assert "slope_angle_rad" not in mixture_reset.params
   assert (
     mixture_cfg.terminations["fell_over"].params["slope_event_name"]
     == SLOPE_MIXTURE_EVENT_NAME
@@ -446,10 +483,33 @@ def test_slope_mixture_inherits_slope_task_and_adds_relative_curricula() -> None
     )
 
   stages = mixture_cfg.curriculum["command_vel"].params["velocity_stages"]
-  assert [stage["step"] for stage in stages] == [0, 3000 * 24, 7000 * 24]
-  assert stages == slope_cfg.curriculum["command_vel"].params["velocity_stages"]
+  assert [stage["step"] for stage in stages] == [
+    iteration * 24
+    for iteration in (
+      0,
+      2000,
+      4000,
+      6000,
+      8000,
+      10000,
+      12000,
+      14000,
+      16000,
+      18000,
+      20000,
+      22000,
+    )
+  ]
+  expected_velocity_ranges = [
+    ((-0.3, 0.3), (-0.2, 0.2), (-0.25, 0.25)),
+    ((-0.5, 0.5), (-0.3, 0.3), (-0.4, 0.4)),
+    ((-0.8, 0.8), (-0.5, 0.5), (-0.8, 0.8)),
+  ] * 4
+  assert [
+    (stage["lin_vel_x"], stage["lin_vel_y"], stage["ang_vel_z"]) for stage in stages
+  ] == expected_velocity_ranges
   assert stages[-1] == {
-    "step": 7000 * 24,
+    "step": 22000 * 24,
     "lin_vel_x": (-0.8, 0.8),
     "lin_vel_y": (-0.5, 0.5),
     "ang_vel_z": (-0.8, 0.8),
@@ -917,11 +977,48 @@ def test_runtime_slope_mixture_uses_per_environment_surface_geometry(
 
   zeros = torch.zeros_like(angles)
   expected_terrain_quat = quat_from_euler_xyz(zeros, -angles, zeros)
+  expected_terrain_xmat = matrix_from_quat(expected_terrain_quat)
   terrain: Entity = env.scene["terrain"]
-  terrain_geom_id = terrain.indexing.geom_ids[0]
+  terrain_geom_id = int(terrain.indexing.geom_ids[0].item())
+  terrain_body_id = env.sim.mj_model.body("terrain").id
+  terrain_mocap_id = int(env.sim.mj_model.body_mocapid[terrain_body_id])
+  assert terrain_mocap_id >= 0
+  assert "geom_quat" not in env.sim.expanded_fields
   torch.testing.assert_close(
-    env.sim.model.geom_quat[:, terrain_geom_id],
+    env.sim.data.mocap_pos[:, terrain_mocap_id],
+    env.scene.env_origins,
+  )
+  torch.testing.assert_close(
+    env.sim.data.mocap_quat[:, terrain_mocap_id],
     expected_terrain_quat,
+    atol=1.0e-6,
+    rtol=0.0,
+  )
+  torch.testing.assert_close(
+    env.sim.data.geom_xpos[:, terrain_geom_id],
+    env.scene.env_origins,
+    atol=1.0e-6,
+    rtol=0.0,
+  )
+  torch.testing.assert_close(
+    env.sim.data.geom_xmat[:, terrain_geom_id],
+    expected_terrain_xmat,
+    atol=1.0e-6,
+    rtol=0.0,
+  )
+
+  # The mocap terrain's data transform must drive raycasts and survive the same
+  # regular forward-kinematics pass used by simulation steps.
+  env.sim.forward()
+  torch.testing.assert_close(
+    env.sim.data.geom_xpos[:, terrain_geom_id],
+    env.scene.env_origins,
+    atol=1.0e-6,
+    rtol=0.0,
+  )
+  torch.testing.assert_close(
+    env.sim.data.geom_xmat[:, terrain_geom_id],
+    expected_terrain_xmat,
     atol=1.0e-6,
     rtol=0.0,
   )
@@ -930,6 +1027,41 @@ def test_runtime_slope_mixture_uses_per_environment_surface_geometry(
     (-torch.sin(angles), zeros, torch.cos(angles)),
     dim=1,
   )
+  slope_tangent = torch.stack(
+    (torch.cos(angles), zeros, torch.sin(angles)),
+    dim=1,
+  )
+  torch.testing.assert_close(
+    env.sim.data.geom_xmat[:, terrain_geom_id, :, 2],
+    slope_normal,
+    atol=1.0e-6,
+    rtol=0.0,
+  )
+
+  foot_height_scan = env.scene["foot_height_scan"]
+  assert isinstance(foot_height_scan, TerrainHeightSensor)
+  scan_data = foot_height_scan.data
+  valid_hits = scan_data.distances >= 0.0
+  assert torch.all(valid_hits.any(dim=1))
+  expected_ray_normals = slope_normal[:, None, :].expand_as(scan_data.normals_w)
+  torch.testing.assert_close(
+    scan_data.normals_w[valid_hits],
+    expected_ray_normals[valid_hits],
+    atol=1.0e-5,
+    rtol=0.0,
+  )
+  ray_origins = env.scene.env_origins[:, None, :]
+  signed_hit_heights = torch.sum(
+    (scan_data.hit_pos_w - ray_origins) * expected_ray_normals,
+    dim=-1,
+  )
+  torch.testing.assert_close(
+    signed_hit_heights[valid_hits],
+    torch.zeros_like(signed_hit_heights[valid_hits]),
+    atol=1.0e-5,
+    rtol=0.0,
+  )
+
   robot: Entity = env.scene["robot"]
   body_up = torch.zeros_like(slope_normal)
   body_up[:, 2] = 1.0
@@ -940,18 +1072,84 @@ def test_runtime_slope_mixture_uses_per_environment_surface_geometry(
     rtol=0.0,
   )
 
-  root_normal_height = torch.sum(robot.data.root_link_pos_w * slope_normal, dim=1)
-  reference_height = 0.313 * math.cos(SLOPE_ANGLE_RAD)
-  assert torch.all(root_normal_height >= reference_height - 1.0e-5)
-  assert torch.all(root_normal_height <= reference_height + 0.01 + 1.0e-5)
+  root_relative = robot.data.root_link_pos_w - env.scene.env_origins
+  root_slope_x = torch.sum(root_relative * slope_tangent, dim=1)
+  root_slope_y = root_relative[:, 1]
+  root_normal_height = torch.sum(root_relative * slope_normal, dim=1)
+  assert torch.all(root_slope_x >= -0.5 - 1.0e-5)
+  assert torch.all(root_slope_x <= 0.5 + 1.0e-5)
+  assert torch.all(root_slope_y >= -0.5 - 1.0e-5)
+  assert torch.all(root_slope_y <= 0.5 + 1.0e-5)
+  assert torch.all(root_normal_height >= 0.313 - 1.0e-5)
+  assert torch.all(root_normal_height <= 0.323 + 1.0e-5)
 
   anchor_id = robot.site_names.index(TETHER_ANCHOR_SITE_NAME)
-  anchor_normal_height = torch.sum(
-    robot.data.site_pos_w[:, anchor_id] * slope_normal,
-    dim=1,
-  )
+  anchor_relative = robot.data.site_pos_w[:, anchor_id] - env.scene.env_origins
+  anchor_slope_x = torch.sum(anchor_relative * slope_tangent, dim=1)
+  anchor_slope_y = anchor_relative[:, 1]
+  anchor_normal_height = torch.sum(anchor_relative * slope_normal, dim=1)
+  assert torch.all(anchor_slope_x >= 3.0 - 1.0e-5)
+  assert torch.all(anchor_slope_x <= 13.0 + 1.0e-5)
+  assert torch.all(anchor_slope_y >= -2.0 - 1.0e-5)
+  assert torch.all(anchor_slope_y <= 2.0 + 1.0e-5)
   assert torch.all(anchor_normal_height >= -1.0e-5)
   assert torch.all(anchor_normal_height <= 0.3 + 1.0e-5)
+
+  foot_geom_ids = torch.tensor(
+    [
+      robot.geom_names.index(name)
+      for name in hexapod_tethered_constants.FOOT_GEOM_NAMES
+    ],
+    device=env.device,
+  )
+  foot_centers = robot.data.geom_pose_w[:, foot_geom_ids, :3]
+  foot_global_ids = robot.indexing.geom_ids[foot_geom_ids].cpu().numpy()
+  foot_radii = torch.as_tensor(
+    env.sim.mj_model.geom_size[foot_global_ids, 0],
+    device=env.device,
+    dtype=foot_centers.dtype,
+  )
+  foot_bottom_height = (
+    torch.sum(
+      (foot_centers - env.scene.env_origins[:, None]) * slope_normal[:, None],
+      dim=-1,
+    )
+    - foot_radii
+  )
+  assert torch.all(foot_bottom_height >= -1.0e-4)
+  assert torch.all(foot_bottom_height <= 0.0101)
+
+  # Native/offscreen viewers copy mocap state into a host MjData and run
+  # mj_forward. Verify that path renders the same per-environment plane pose.
+  host_data = mujoco.MjData(env.sim.mj_model)
+  env_index = 0
+  host_data.qpos[:] = env.sim.data.qpos[env_index].cpu().numpy()
+  host_data.qvel[:] = env.sim.data.qvel[env_index].cpu().numpy()
+  host_data.mocap_pos[:] = env.sim.data.mocap_pos[env_index].cpu().numpy()
+  host_data.mocap_quat[:] = env.sim.data.mocap_quat[env_index].cpu().numpy()
+  mujoco.mj_forward(env.sim.mj_model, host_data)
+  np.testing.assert_allclose(
+    host_data.geom_xpos[terrain_geom_id],
+    env.scene.env_origins[env_index].cpu().numpy(),
+    atol=1.0e-6,
+  )
+  np.testing.assert_allclose(
+    host_data.geom_xmat[terrain_geom_id].reshape(3, 3),
+    expected_terrain_xmat[env_index].cpu().numpy(),
+    atol=1.0e-6,
+  )
+
+  # The randomized normal offset may start the feet up to 10 mm above the
+  # surface. Over a short settling window every world must still collide with
+  # its posed plane, rather than falling through it.
+  contact_seen = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+  feet_ground_contact = env.scene["feet_ground_contact"]
+  assert isinstance(feet_ground_contact, ContactSensor)
+  for _ in range(10):
+    env.step(torch.zeros((env.num_envs, 19), device=env.device))
+    assert feet_ground_contact.data.found is not None
+    contact_seen |= (feet_ground_contact.data.found > 0).any(dim=1)
+  assert torch.all(contact_seen)
 
 
 def test_tethered_pretrained_load_keeps_legs_and_resets_cable(

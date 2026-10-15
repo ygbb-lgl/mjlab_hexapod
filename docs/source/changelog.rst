@@ -64,9 +64,11 @@ Changed
   while fixed-slope and slope-mixture training now use ``60 N m`` without
   changing PD gains, reflected inertia, policy dimensions, or cable-force limits.
 
-- Aligned the explicit fixed-slope and slope-mixture velocity curricula with
-  the flat Hexapod ranges at iterations 0, 3000, and 7000, without separately
-  overriding the command generator's initial ranges.
+- Aligned the fixed-slope velocity curriculum with the flat Hexapod ranges at
+  iterations 0, 3000, and 7000. Slope-mixture now repeats its explicit
+  low/medium/full command ramp at relative iterations 0/2000/4000 inside every
+  6000-iteration angle block, without separately overriding the command
+  generator's initial ranges.
 
 - Recalibrated the fixed-slope tether rewards for MJLab's unclipped signed
   reward sum, gated assistance on commands directed toward the anchor, reduced
@@ -116,6 +118,15 @@ Removed
 
 Fixed
 ^^^^^
+
+- Fixed slope-mixture terrain randomization so collision, ray casting, and
+  visualization now share one per-environment mocap pose. Each plane rotates
+  about its own environment origin. Mixture now also owns a neutral robot
+  initial state instead of inheriting the fixed 22-degree pose, and reconstructs
+  root and anchor positions from along-slope, lateral, and surface-normal
+  coordinates for the sampled angle. This avoids stale world-attached geom
+  transforms, apparent ground penetration, and steep-angle position inflation,
+  without expanding every geom quaternion per world.
 
 - The viewer now resets recurrent policy hidden state for environments that terminate
   or time out. Previously it only reset the policy when the user pressed the reset

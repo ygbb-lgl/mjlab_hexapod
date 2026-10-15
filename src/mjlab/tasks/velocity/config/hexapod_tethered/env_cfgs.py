@@ -20,6 +20,7 @@ from mjlab.asset_zoo.robots.hexapod_tethered.hexapod_tethered_constants import (
   TETHER_FORCE_SENSOR_NAME,
   TETHER_TENDON_NAME,
   get_hexapod_tethered_robot_cfg,
+  get_hexapod_tethered_slope_mixture_robot_cfg,
   get_hexapod_tethered_slope_robot_cfg,
 )
 from mjlab.envs import ManagerBasedRlEnvCfg
@@ -378,6 +379,11 @@ def _tilt_terrain_to_fixed_slope(spec: mujoco.MjSpec) -> None:
   spec.body("terrain").quat[:] = SLOPE_ROOT_QUAT
 
 
+def _make_terrain_mocap(spec: mujoco.MjSpec) -> None:
+  """Make the mixture terrain independently poseable in every world."""
+  spec.body("terrain").mocap = True
+
+
 def hexapod_tethered_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   """Create the flat joystick task with one coordinated tether action."""
   cfg = hexapod_flat_env_cfg(play=play)
@@ -507,10 +513,15 @@ def hexapod_tethered_slope_mixture_env_cfg(
   """Create the per-episode randomized-slope curriculum task."""
   cfg = hexapod_tethered_slope_env_cfg(play=play)
 
-  # The slope XML is reused for its cable-force range, but the terrain must
-  # start level: RandomizeSlopeAngle writes the complete per-world plane
-  # orientation, rather than composing on top of the fixed 22-degree slope.
-  cfg.scene.spec_fn = None
+  # Reuse the slope XML's 400 N cable and 60 N m leg actuators, but not its
+  # fixed 22-degree initial root pose. The reset event below constructs each
+  # root pose directly in that environment's sampled slope frame.
+  cfg.scene.entities = {"robot": get_hexapod_tethered_slope_mixture_robot_cfg()}
+
+  # The slope XML is reused for its cable-force range. Mark only the terrain as
+  # mocap so RandomizeSlopeAngle can give every world an independent plane pose
+  # without expanding the complete model geom transform tables.
+  cfg.scene.spec_fn = _make_terrain_mocap
 
   if play:
     slope_stages = [
@@ -547,11 +558,13 @@ def hexapod_tethered_slope_mixture_env_cfg(
       "asset_cfg": SceneEntityCfg("terrain", geom_names=("terrain",)),
     },
   )
-  # Reset-event order is part of the geometry contract: sample and rotate the
+  # Reset-event order is part of the geometry contract: sample and pose the
   # plane before placing the trunk and the world-body anchor on that plane.
   cfg.events = {SLOPE_MIXTURE_EVENT_NAME: slope_event, **cfg.events}
 
   reset_base = cfg.events["reset_base"]
+  reset_base.func = events.reset_root_state_on_slope_mixture
+  reset_base.params.pop("slope_angle_rad")
   reset_base.params["slope_event_name"] = SLOPE_MIXTURE_EVENT_NAME
   anchor = cfg.events["tether_anchor"]
   anchor.params["slope_event_name"] = SLOPE_MIXTURE_EVENT_NAME
@@ -561,8 +574,9 @@ def hexapod_tethered_slope_mixture_env_cfg(
     cfg.rewards[reward_name].params["slope_event_name"] = SLOPE_MIXTURE_EVENT_NAME
 
   if not play:
-    # Keep an explicit mixture-local copy of the flat and fixed-slope command
-    # curriculum so all three tasks train against the same velocity ranges.
+    # Restart the same low/medium/full command ramp inside every 6000-iteration
+    # slope block. Each newly expanded angle range is therefore introduced at
+    # low speed before recovering the complete flat-task command distribution.
     mixture_velocity_stages = [
       {
         "step": 0,
@@ -571,13 +585,67 @@ def hexapod_tethered_slope_mixture_env_cfg(
         "ang_vel_z": (-0.25, 0.25),
       },
       {
-        "step": 3000 * SLOPE_MIXTURE_DEFAULT_ROLLOUT_STEPS,
+        "step": 2000 * SLOPE_MIXTURE_DEFAULT_ROLLOUT_STEPS,
         "lin_vel_x": (-0.5, 0.5),
         "lin_vel_y": (-0.3, 0.3),
         "ang_vel_z": (-0.4, 0.4),
       },
       {
-        "step": 7000 * SLOPE_MIXTURE_DEFAULT_ROLLOUT_STEPS,
+        "step": 4000 * SLOPE_MIXTURE_DEFAULT_ROLLOUT_STEPS,
+        "lin_vel_x": (-0.8, 0.8),
+        "lin_vel_y": (-0.5, 0.5),
+        "ang_vel_z": (-0.8, 0.8),
+      },
+      {
+        "step": 6000 * SLOPE_MIXTURE_DEFAULT_ROLLOUT_STEPS,
+        "lin_vel_x": (-0.3, 0.3),
+        "lin_vel_y": (-0.2, 0.2),
+        "ang_vel_z": (-0.25, 0.25),
+      },
+      {
+        "step": 8000 * SLOPE_MIXTURE_DEFAULT_ROLLOUT_STEPS,
+        "lin_vel_x": (-0.5, 0.5),
+        "lin_vel_y": (-0.3, 0.3),
+        "ang_vel_z": (-0.4, 0.4),
+      },
+      {
+        "step": 10000 * SLOPE_MIXTURE_DEFAULT_ROLLOUT_STEPS,
+        "lin_vel_x": (-0.8, 0.8),
+        "lin_vel_y": (-0.5, 0.5),
+        "ang_vel_z": (-0.8, 0.8),
+      },
+      {
+        "step": 12000 * SLOPE_MIXTURE_DEFAULT_ROLLOUT_STEPS,
+        "lin_vel_x": (-0.3, 0.3),
+        "lin_vel_y": (-0.2, 0.2),
+        "ang_vel_z": (-0.25, 0.25),
+      },
+      {
+        "step": 14000 * SLOPE_MIXTURE_DEFAULT_ROLLOUT_STEPS,
+        "lin_vel_x": (-0.5, 0.5),
+        "lin_vel_y": (-0.3, 0.3),
+        "ang_vel_z": (-0.4, 0.4),
+      },
+      {
+        "step": 16000 * SLOPE_MIXTURE_DEFAULT_ROLLOUT_STEPS,
+        "lin_vel_x": (-0.8, 0.8),
+        "lin_vel_y": (-0.5, 0.5),
+        "ang_vel_z": (-0.8, 0.8),
+      },
+      {
+        "step": 18000 * SLOPE_MIXTURE_DEFAULT_ROLLOUT_STEPS,
+        "lin_vel_x": (-0.3, 0.3),
+        "lin_vel_y": (-0.2, 0.2),
+        "ang_vel_z": (-0.25, 0.25),
+      },
+      {
+        "step": 20000 * SLOPE_MIXTURE_DEFAULT_ROLLOUT_STEPS,
+        "lin_vel_x": (-0.5, 0.5),
+        "lin_vel_y": (-0.3, 0.3),
+        "ang_vel_z": (-0.4, 0.4),
+      },
+      {
+        "step": 22000 * SLOPE_MIXTURE_DEFAULT_ROLLOUT_STEPS,
         "lin_vel_x": (-0.8, 0.8),
         "lin_vel_y": (-0.5, 0.5),
         "ang_vel_z": (-0.8, 0.8),
