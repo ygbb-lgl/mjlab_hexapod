@@ -8,6 +8,16 @@ Upcoming version (not yet released)
 Added
 ^^^^^
 
+- Added ``Mjlab-Velocity-Slope-Mixture-Hexapod-Tethered`` for full-PPO
+  continuation from the fixed-slope task. It reuses the slope XML while
+  sampling a separate 20--60 degree plane per environment and episode, keeps
+  every fixed-slope reward weight, and evaluates terrain-sensitive rewards,
+  resets, and termination against the sampled plane. Its
+  0/6000/12000/18000 relative slope curriculum survives mixture checkpoint
+  resumes, and local native resume now accepts a checkpoint by absolute path
+  across experiment folders. The curriculum expands through 20--30, 20--40,
+  20--50, and 20--60 degrees in four 6000-iteration stages.
+
 - Added a flat-ground ``Hexapod-Tethered`` velocity task and self-contained
   robot asset. Its shared 19-output policy coordinates 18 leg targets with a
   cable command, uses a 71-entry actor with a sensor-reconstructible
@@ -49,12 +59,21 @@ Added
 Changed
 ^^^^^^^
 
+- Split the tethered Hexapod leg actuators into independent flat and slope
+  configurations. Flat training retains its ``30 N m`` joint-torque limit,
+  while fixed-slope and slope-mixture training now use ``60 N m`` without
+  changing PD gains, reflected inertia, policy dimensions, or cable-force limits.
+
+- Aligned the explicit fixed-slope and slope-mixture velocity curricula with
+  the flat Hexapod ranges at iterations 0, 3000, and 7000, without separately
+  overriding the command generator's initial ranges.
+
 - Recalibrated the fixed-slope tether rewards for MJLab's unclipped signed
   reward sum, gated assistance on commands directed toward the anchor, reduced
-  the slope learning rate to ``3e-4``, and added a slope-local command curriculum
-  at iterations 0, 3000, and 6000. Velocity pushes begin after a 1000-iteration
-  warm-up, initial yaw remains near the world-``+X`` uphill direction, and fall
-  detection is now relative to the slope normal.
+  the slope learning rate to ``3e-4``, and gave it an explicit copy of the flat
+  command curriculum at iterations 0, 3000, and 7000. Velocity pushes begin
+  after a 1000-iteration warm-up, initial yaw remains near the world-``+X``
+  uphill direction, and fall detection is now relative to the slope normal.
 
 - The ``Hexapod-Tethered`` task now applies an independent global observation
   noise level of ``1.5`` to all actor sensor-noise scales, including cable

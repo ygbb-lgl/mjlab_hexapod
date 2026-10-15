@@ -33,11 +33,13 @@ from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.sensor import ContactSensorCfg
 from mjlab.tasks.velocity import mdp as velocity_mdp
 from mjlab.tasks.velocity.config.hexapod.env_cfgs import hexapod_flat_env_cfg
-from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 
 from . import events, observations, rewards, terminations
-from .rl_cfg import SLOPE_DEFAULT_ROLLOUT_STEPS
+from .rl_cfg import (
+  SLOPE_DEFAULT_ROLLOUT_STEPS,
+  SLOPE_MIXTURE_DEFAULT_ROLLOUT_STEPS,
+)
 
 TETHER_ACTION_NAME = "cable"
 TETHER_ACTION_MIN = 0.0
@@ -54,6 +56,7 @@ SLOPE_TETHER_SLACK_THRESHOLD = 15.0
 SLOPE_TETHER_MAX_SAFE_FORCE = 250.0
 SLOPE_TETHER_COMMAND_THRESHOLD = 0.05
 SLOPE_PUSH_START_ITERATION = 1000
+SLOPE_MIXTURE_EVENT_NAME = "terrain_slope"
 
 OBSERVATION_NOISE_LEVEL = 1.5
 OBSERVATION_NOISE_SCALES = {
@@ -420,36 +423,29 @@ def hexapod_tethered_slope_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   _configure_slope_surface_rewards(cfg)
   _configure_slope_tether_rewards(cfg)
 
-  twist = cfg.commands["twist"]
-  assert isinstance(twist, UniformVelocityCommandCfg)
   if not play:
-    initial_lin_vel_x = (0.05, 0.3)
-    initial_lin_vel_y = (-0.05, 0.05)
-    initial_ang_vel_z = (-0.1, 0.1)
-    slope_velocity_stages = [
+    # Keep an explicit slope-local copy of the flat Hexapod curriculum so this
+    # task remains independently tunable without changing its current ranges.
+    cfg.curriculum["command_vel"].params["velocity_stages"] = [
       {
         "step": 0,
-        "lin_vel_x": initial_lin_vel_x,
-        "lin_vel_y": initial_lin_vel_y,
-        "ang_vel_z": initial_ang_vel_z,
-      },
-      {
-        "step": 3000 * SLOPE_DEFAULT_ROLLOUT_STEPS,
-        "lin_vel_x": (0.0, 0.5),
+        "lin_vel_x": (-0.3, 0.3),
         "lin_vel_y": (-0.2, 0.2),
         "ang_vel_z": (-0.25, 0.25),
       },
       {
-        "step": 6000 * SLOPE_DEFAULT_ROLLOUT_STEPS,
+        "step": 3000 * SLOPE_DEFAULT_ROLLOUT_STEPS,
+        "lin_vel_x": (-0.5, 0.5),
+        "lin_vel_y": (-0.3, 0.3),
+        "ang_vel_z": (-0.4, 0.4),
+      },
+      {
+        "step": 7000 * SLOPE_DEFAULT_ROLLOUT_STEPS,
         "lin_vel_x": (-0.8, 0.8),
         "lin_vel_y": (-0.5, 0.5),
         "ang_vel_z": (-0.8, 0.8),
       },
     ]
-    cfg.curriculum["command_vel"].params["velocity_stages"] = slope_velocity_stages
-    twist.ranges.lin_vel_x = initial_lin_vel_x
-    twist.ranges.lin_vel_y = initial_lin_vel_y
-    twist.ranges.ang_vel_z = initial_ang_vel_z
 
     push = cfg.events["push_robot"]
     push.func = events.push_by_setting_velocity_after_step
@@ -457,10 +453,9 @@ def hexapod_tethered_slope_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
   reset_base = cfg.events["reset_base"]
   reset_base.func = events.reset_root_state_on_slope
-  # The first command stage is intentionally uphill-biased. Keep the initial
-  # heading near world +X so body-frame +X commands also point toward the
-  # uphill anchor instead of disabling the tether direction gate in half of
-  # the environments through the inherited flat-task yaw range [-pi, pi].
+  # Keep the initial heading near world +X so positive body-frame X commands
+  # point toward the uphill anchor. Negative X commands still train downhill
+  # motion using the same symmetric command distribution as the flat task.
   reset_base.params["pose_range"]["yaw"] = (-0.15, 0.15)
   reset_base.params = {
     **reset_base.params,
@@ -503,4 +498,91 @@ def hexapod_tethered_slope_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
   cfg.viewer.elevation = -20.0
   cfg.viewer.azimuth = 120.0
+  return cfg
+
+
+def hexapod_tethered_slope_mixture_env_cfg(
+  play: bool = False,
+) -> ManagerBasedRlEnvCfg:
+  """Create the per-episode randomized-slope curriculum task."""
+  cfg = hexapod_tethered_slope_env_cfg(play=play)
+
+  # The slope XML is reused for its cable-force range, but the terrain must
+  # start level: RandomizeSlopeAngle writes the complete per-world plane
+  # orientation, rather than composing on top of the fixed 22-degree slope.
+  cfg.scene.spec_fn = None
+
+  if play:
+    slope_stages = [
+      {
+        "step": 0,
+        "angle_range_deg": (20.0, 60.0),
+      }
+    ]
+  else:
+    slope_stages = [
+      {
+        "step": 0,
+        "angle_range_deg": (20.0, 30.0),
+      },
+      {
+        "step": 6000 * SLOPE_MIXTURE_DEFAULT_ROLLOUT_STEPS,
+        "angle_range_deg": (20.0, 40.0),
+      },
+      {
+        "step": 12000 * SLOPE_MIXTURE_DEFAULT_ROLLOUT_STEPS,
+        "angle_range_deg": (20.0, 50.0),
+      },
+      {
+        "step": 18000 * SLOPE_MIXTURE_DEFAULT_ROLLOUT_STEPS,
+        "angle_range_deg": (20.0, 60.0),
+      },
+    ]
+
+  slope_event = EventTermCfg(
+    mode="reset",
+    func=events.RandomizeSlopeAngle,
+    params={
+      "slope_stages": slope_stages,
+      "asset_cfg": SceneEntityCfg("terrain", geom_names=("terrain",)),
+    },
+  )
+  # Reset-event order is part of the geometry contract: sample and rotate the
+  # plane before placing the trunk and the world-body anchor on that plane.
+  cfg.events = {SLOPE_MIXTURE_EVENT_NAME: slope_event, **cfg.events}
+
+  reset_base = cfg.events["reset_base"]
+  reset_base.params["slope_event_name"] = SLOPE_MIXTURE_EVENT_NAME
+  anchor = cfg.events["tether_anchor"]
+  anchor.params["slope_event_name"] = SLOPE_MIXTURE_EVENT_NAME
+  fell_over = cfg.terminations["fell_over"]
+  fell_over.params["slope_event_name"] = SLOPE_MIXTURE_EVENT_NAME
+  for reward_name in ("tether_eng_steep", "tether_slack_penalty"):
+    cfg.rewards[reward_name].params["slope_event_name"] = SLOPE_MIXTURE_EVENT_NAME
+
+  if not play:
+    # Keep an explicit mixture-local copy of the flat and fixed-slope command
+    # curriculum so all three tasks train against the same velocity ranges.
+    mixture_velocity_stages = [
+      {
+        "step": 0,
+        "lin_vel_x": (-0.3, 0.3),
+        "lin_vel_y": (-0.2, 0.2),
+        "ang_vel_z": (-0.25, 0.25),
+      },
+      {
+        "step": 3000 * SLOPE_MIXTURE_DEFAULT_ROLLOUT_STEPS,
+        "lin_vel_x": (-0.5, 0.5),
+        "lin_vel_y": (-0.3, 0.3),
+        "ang_vel_z": (-0.4, 0.4),
+      },
+      {
+        "step": 7000 * SLOPE_MIXTURE_DEFAULT_ROLLOUT_STEPS,
+        "lin_vel_x": (-0.8, 0.8),
+        "lin_vel_y": (-0.5, 0.5),
+        "ang_vel_z": (-0.8, 0.8),
+      },
+    ]
+    cfg.curriculum["command_vel"].params["velocity_stages"] = mixture_velocity_stages
+
   return cfg

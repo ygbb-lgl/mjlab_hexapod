@@ -27,6 +27,8 @@ from .env_cfgs import (
 PRETRAINED_CABLE_ACTION_MEAN = 0.1
 PRETRAINED_CABLE_ACTION_STD = 0.2
 PRETRAINED_TENSION_NORMALIZER_STD = 200.0
+SLOPE_MIXTURE_CHECKPOINT_KEY = "slope_mixture_curriculum"
+SLOPE_MIXTURE_CHECKPOINT_VERSION = 1
 
 
 def get_tethered_policy_metadata(
@@ -254,3 +256,54 @@ class TetheredVelocityOnPolicyRunner(VelocityOnPolicyRunner):
       float("inf") if clip_actions is None else float(clip_actions)
     )
     return metadata
+
+
+class TetheredSlopeMixtureOnPolicyRunner(TetheredVelocityOnPolicyRunner):
+  """Resume fixed-slope PPO state with a fresh mixture curriculum clock."""
+
+  def save(self, path: str, infos: dict | None = None) -> None:
+    """Mark checkpoints so later mixture resumes retain curriculum progress."""
+    mixture_state = {"version": SLOPE_MIXTURE_CHECKPOINT_VERSION}
+    infos = {**(infos or {}), SLOPE_MIXTURE_CHECKPOINT_KEY: mixture_state}
+    super().save(path, infos)
+
+  def load(
+    self,
+    path: str,
+    load_cfg: dict | None = None,
+    strict: bool = True,
+    map_location: str | None = None,
+  ) -> dict:
+    """Load PPO state and translate fixed-slope progress into mixture progress.
+
+    A fixed-slope checkpoint has no mixture marker. Its actor, critic, optimizer,
+    and PPO iteration are restored normally, but its environment step counter is
+    reset so angle and command curricula start at mixture stage zero. A checkpoint
+    saved by this runner carries the marker and therefore restores that counter.
+    """
+    infos = super().load(
+      path,
+      load_cfg=load_cfg,
+      strict=strict,
+      map_location=map_location,
+    )
+    if load_cfg is None:
+      is_mixture_checkpoint = (
+        isinstance(infos, dict) and SLOPE_MIXTURE_CHECKPOINT_KEY in infos
+      )
+      if not is_mixture_checkpoint:
+        self.env.unwrapped.common_step_counter = 0
+        self._restore_configured_learning_rate()
+      else:
+        # RslRlVecEnvWrapper performs its first reset before this checkpoint is
+        # loaded. Resample once after restoring the mixture clock so the first
+        # rollout uses the checkpoint's active slope/command curriculum stage.
+        self.env.reset()
+    return infos
+
+  def _restore_configured_learning_rate(self) -> None:
+    """Keep optimizer moments while applying the mixture task's initial LR."""
+    learning_rate = float(self.cfg["algorithm"]["learning_rate"])
+    self.alg.learning_rate = learning_rate
+    for param_group in self.alg.optimizer.param_groups:
+      param_group["lr"] = learning_rate

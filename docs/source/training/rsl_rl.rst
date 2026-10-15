@@ -241,6 +241,9 @@ The runner searches for the most recent run directory under
 ``logs/rsl_rl/{experiment_name}/`` and loads the highest-numbered checkpoint.
 Narrow the search with ``--agent.load-run`` (regex on directory names) and
 ``--agent.load-checkpoint`` (regex on checkpoint filenames).
+Alternatively, pass an existing absolute checkpoint file to
+``--agent.load-checkpoint`` to resume across experiment directories while
+writing the continued run under the new task's ``experiment_name``.
 
 ``--agent.max-iterations`` controls how many *additional* iterations to run
 from the checkpoint. If you are resuming from iteration 11500 with

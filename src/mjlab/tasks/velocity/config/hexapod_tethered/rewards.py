@@ -12,6 +12,7 @@ from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import ContactSensor, RingPatternCfg, TerrainHeightSensor
 
+from .events import get_slope_angle_rad
 from .observations import cable_tension, tether_direction_body
 
 if TYPE_CHECKING:
@@ -420,6 +421,21 @@ def tether_work_assist(
   return wants_assist * torch.clamp(power, min=0.0) * 0.01
 
 
+def _reward_slope_angles(
+  env: ManagerBasedRlEnv,
+  slope_angle_deg: float,
+  slope_event_name: str | None,
+) -> torch.Tensor:
+  """Resolve either the fixed angle or a randomized per-environment buffer."""
+  if slope_event_name is not None:
+    return get_slope_angle_rad(env, slope_event_name)
+  return torch.tensor(
+    math.radians(slope_angle_deg),
+    device=getattr(env, "device", None),
+    dtype=torch.float32,
+  )
+
+
 def tether_eng_steep(
   env: ManagerBasedRlEnv,
   sensor_name: str,
@@ -428,13 +444,19 @@ def tether_eng_steep(
   command_name: str,
   command_threshold: float,
   asset_cfg: SceneEntityCfg,
+  slope_event_name: str | None = None,
 ) -> torch.Tensor:
   """Reward slope tension only when motion toward the anchor is commanded."""
-  slope_factor = min(max(slope_angle_deg / 60.0, 0.0), 1.0)
+  slope_angles = _reward_slope_angles(
+    env,
+    slope_angle_deg,
+    slope_event_name,
+  )
+  slope_factor = torch.clamp(torch.rad2deg(slope_angles) / 60.0, 0.0, 1.0)
   target_tension = 30.0 + (180.0 - 30.0) * slope_factor
   tension = cable_tension(env, sensor_name).squeeze(1)
   engagement = torch.clamp(tension / (target_tension + 1e-6), 0.0, 1.0)
-  is_steep = float(math.radians(slope_angle_deg) > steep_threshold)
+  is_steep = (slope_angles > steep_threshold).float()
   command_gate = _tether_command_gate(
     env,
     command_name,
@@ -443,7 +465,13 @@ def tether_eng_steep(
   )
   env.extras["log"]["Metrics/cable_tension_mean"] = tension.mean()
   env.extras["log"]["Metrics/cable_tension_p95"] = torch.quantile(tension, 0.95)
+  env.extras["log"]["Metrics/tether_target_tension_mean"] = target_tension.mean()
   env.extras["log"]["Metrics/tether_assist_command_fraction"] = command_gate.mean()
+  if slope_event_name is not None:
+    slope_angles_deg = torch.rad2deg(slope_angles)
+    env.extras["log"]["Metrics/slope_angle_deg_mean"] = slope_angles_deg.mean()
+    env.extras["log"]["Metrics/slope_angle_deg_min"] = slope_angles_deg.min()
+    env.extras["log"]["Metrics/slope_angle_deg_max"] = slope_angles_deg.max()
   return is_steep * command_gate * engagement
 
 
@@ -456,10 +484,16 @@ def tether_slack_penalty(
   command_name: str,
   command_threshold: float,
   asset_cfg: SceneEntityCfg,
+  slope_event_name: str | None = None,
 ) -> torch.Tensor:
   """Penalize slack only while slope assistance is requested."""
   tension = cable_tension(env, sensor_name).squeeze(1)
-  is_steep = float(math.radians(slope_angle_deg) > steep_threshold)
+  slope_angles = _reward_slope_angles(
+    env,
+    slope_angle_deg,
+    slope_event_name,
+  )
+  is_steep = (slope_angles > steep_threshold).float()
   is_slack = (tension < slack_threshold).float()
   command_gate = _tether_command_gate(
     env,

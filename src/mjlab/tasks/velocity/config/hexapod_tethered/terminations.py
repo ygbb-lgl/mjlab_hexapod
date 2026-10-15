@@ -1,4 +1,4 @@
-"""Termination terms for the fixed-slope tethered Hexapod task."""
+"""Termination terms for fixed and randomized tethered Hexapod slopes."""
 
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ from mjlab.entity import Entity
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.utils.lab_api.math import quat_apply
 
+from .events import get_slope_angle_rad
+
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
 
@@ -20,8 +22,9 @@ def bad_orientation_relative_to_slope(
   limit_angle: float,
   slope_angle_rad: float,
   asset_cfg: SceneEntityCfg,
+  slope_event_name: str | None = None,
 ) -> torch.Tensor:
-  """Terminate when trunk up deviates too far from the fixed slope normal."""
+  """Terminate when trunk up deviates too far from the current slope normal."""
   if not 0.0 < limit_angle <= math.pi:
     raise ValueError("limit_angle must be in (0, pi]")
   asset: Entity = env.scene[asset_cfg.name]
@@ -32,8 +35,17 @@ def bad_orientation_relative_to_slope(
   )
   body_up[:, 2] = 1.0
   body_up_w = quat_apply(asset.data.root_link_quat_w, body_up)
-  slope_normal = body_up.new_tensor(
-    (-math.sin(slope_angle_rad), 0.0, math.cos(slope_angle_rad))
+  if slope_event_name is None:
+    slope_angles = body_up.new_full((env.num_envs,), slope_angle_rad)
+  else:
+    slope_angles = get_slope_angle_rad(env, slope_event_name).to(body_up)
+  slope_normal = torch.stack(
+    (
+      -torch.sin(slope_angles),
+      torch.zeros_like(slope_angles),
+      torch.cos(slope_angles),
+    ),
+    dim=1,
   )
   alignment = torch.sum(body_up_w * slope_normal, dim=1)
   tilt = torch.acos(torch.clamp(alignment, -1.0, 1.0))

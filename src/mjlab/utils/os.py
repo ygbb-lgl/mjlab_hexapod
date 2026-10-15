@@ -29,11 +29,22 @@ def get_checkpoint_path(
   """Get path to model checkpoint in input directory.
 
   The checkpoint file is resolved as: `<log_path>/<run_dir>/<checkpoint>`.
+  An existing absolute checkpoint file bypasses the run-directory lookup. This
+  allows native resume across experiments while the new run keeps its own log
+  directory.
 
   If `run_dir` and `checkpoint` are regex expressions, then the most recent
   (highest alphabetical order) run and checkpoint are selected. To disable this
   behavior, set `sort_alpha` to `False`.
   """
+  direct_checkpoint = Path(checkpoint).expanduser()
+  if direct_checkpoint.is_absolute():
+    if not direct_checkpoint.is_file():
+      raise ValueError(
+        f"Absolute checkpoint path does not exist or is not a file: {direct_checkpoint}"
+      )
+    return direct_checkpoint.resolve()
+
   if not log_path.exists():
     raise ValueError(f"Log path does not exist: {log_path}")
   # Exclude wandb_checkpoints directory which is used for caching downloaded checkpoints.

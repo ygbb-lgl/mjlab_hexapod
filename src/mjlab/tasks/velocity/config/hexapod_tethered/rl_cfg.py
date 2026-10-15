@@ -10,6 +10,7 @@ from mjlab.rl import (
 
 DEFAULT_ROLLOUT_STEPS = 24
 SLOPE_DEFAULT_ROLLOUT_STEPS = 24
+SLOPE_MIXTURE_DEFAULT_ROLLOUT_STEPS = 24
 
 
 def hexapod_tethered_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
@@ -99,3 +100,53 @@ class HexapodTetheredSlopePpoRunnerCfg(RslRlOnPolicyRunnerCfg):
 def hexapod_tethered_slope_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
   """Create the PPO runner configuration for the fixed-slope task."""
   return HexapodTetheredSlopePpoRunnerCfg()
+
+
+@dataclass
+class HexapodTetheredSlopeMixturePpoRunnerCfg(RslRlOnPolicyRunnerCfg):
+  """PPO settings owned by the variable-slope curriculum task."""
+
+  actor: RslRlModelCfg = field(
+    default_factory=lambda: RslRlModelCfg(
+      hidden_dims=(512, 256, 128),
+      activation="elu",
+      obs_normalization=True,
+      distribution_cfg={
+        "class_name": "GaussianDistribution",
+        "init_std": 1.0,
+        "std_type": "scalar",
+      },
+    )
+  )
+  critic: RslRlModelCfg = field(
+    default_factory=lambda: RslRlModelCfg(
+      hidden_dims=(512, 256, 128),
+      activation="elu",
+      obs_normalization=True,
+    )
+  )
+  algorithm: RslRlPpoAlgorithmCfg = field(
+    default_factory=lambda: RslRlPpoAlgorithmCfg(
+      value_loss_coef=1.0,
+      use_clipped_value_loss=True,
+      clip_param=0.2,
+      entropy_coef=0.005,
+      num_learning_epochs=5,
+      num_mini_batches=4,
+      learning_rate=2.0e-4,
+      schedule="adaptive",
+      gamma=0.99,
+      lam=0.95,
+      desired_kl=0.008,
+      max_grad_norm=1.0,
+    )
+  )
+  experiment_name: str = "hexapod_tethered_slope_mixture_velocity"
+  save_interval: int = 500
+  num_steps_per_env: int = SLOPE_MIXTURE_DEFAULT_ROLLOUT_STEPS
+  max_iterations: int = 24_000
+
+
+def hexapod_tethered_slope_mixture_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
+  """Create the PPO runner configuration for the variable-slope task."""
+  return HexapodTetheredSlopeMixturePpoRunnerCfg()

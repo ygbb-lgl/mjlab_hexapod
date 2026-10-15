@@ -45,12 +45,14 @@ from mjlab.tasks.velocity.config.hexapod_tethered import (
 from mjlab.tasks.velocity.config.hexapod_tethered.env_cfgs import (
   OBSERVATION_NOISE_LEVEL,
   OBSERVATION_NOISE_SCALES,
+  SLOPE_MIXTURE_EVENT_NAME,
   TETHER_ACTION_MAX,
   TETHER_ACTION_MIN,
   TETHER_DIRECTION_NOISE_SCALES,
   TETHER_FORCE_PER_ACTION,
   hexapod_tethered_flat_env_cfg,
   hexapod_tethered_slope_env_cfg,
+  hexapod_tethered_slope_mixture_env_cfg,
 )
 from mjlab.tasks.velocity.config.hexapod_tethered.rl_cfg import (
   HexapodTetheredSlopePpoRunnerCfg,
@@ -64,7 +66,8 @@ from mjlab.tasks.velocity.config.hexapod_tethered.runner import (
   TetheredVelocityOnPolicyRunner,
   get_tethered_policy_metadata,
 )
-from mjlab.utils.lab_api.math import quat_from_euler_xyz, quat_mul
+from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
+from mjlab.utils.lab_api.math import quat_apply, quat_from_euler_xyz, quat_mul
 from mjlab.utils.noise import UniformNoiseCfg
 
 
@@ -106,6 +109,15 @@ def tethered_slope_env() -> Iterator[ManagerBasedRlEnv]:
   env.close()
 
 
+@pytest.fixture(scope="module")
+def tethered_slope_mixture_env() -> Iterator[ManagerBasedRlEnv]:
+  cfg = hexapod_tethered_slope_mixture_env_cfg()
+  cfg.scene.num_envs = 4
+  env = ManagerBasedRlEnv(cfg, device="cpu")
+  yield env
+  env.close()
+
+
 def test_tethered_asset_preserves_leg_model_and_adds_passive_arm(
   tethered_entity: Entity,
   tethered_model: mujoco.MjModel,
@@ -125,19 +137,27 @@ def test_tethered_asset_preserves_leg_model_and_adds_passive_arm(
     pytest.approx(40.5787774168)
   )
 
-  tethered_actuators = hexapod_tethered_constants.HEXAPOD_TETHERED_ARTICULATION
+  flat_actuators = hexapod_tethered_constants.HEXAPOD_TETHERED_FLAT_ARTICULATION
+  slope_actuators = hexapod_tethered_constants.HEXAPOD_TETHERED_SLOPE_ARTICULATION
   base_actuators = hexapod_constants.HEXAPOD_ARTICULATION
-  assert tethered_actuators is not base_actuators
-  for tethered_cfg, base_cfg in zip(
-    tethered_actuators.actuators[:3],
+  assert hexapod_tethered_constants.HEXAPOD_TETHERED_ARTICULATION is flat_actuators
+  assert flat_actuators is not slope_actuators
+  assert flat_actuators is not base_actuators
+  for flat_cfg, slope_cfg, base_cfg in zip(
+    flat_actuators.actuators[:3],
+    slope_actuators.actuators[:3],
     base_actuators.actuators,
     strict=True,
   ):
-    assert isinstance(tethered_cfg, BuiltinPositionActuatorCfg)
+    assert isinstance(flat_cfg, BuiltinPositionActuatorCfg)
+    assert isinstance(slope_cfg, BuiltinPositionActuatorCfg)
     assert isinstance(base_cfg, BuiltinPositionActuatorCfg)
-    assert tethered_cfg is not base_cfg
-    assert tethered_cfg.stiffness == base_cfg.stiffness
-    assert tethered_cfg.damping == base_cfg.damping
+    assert flat_cfg is not slope_cfg
+    assert flat_cfg is not base_cfg
+    assert flat_cfg.stiffness == slope_cfg.stiffness == base_cfg.stiffness
+    assert flat_cfg.damping == slope_cfg.damping == base_cfg.damping
+    assert flat_cfg.effort_limit == pytest.approx(30.0)
+    assert slope_cfg.effort_limit == pytest.approx(60.0)
 
   for joint_name in JOINT_NAMES:
     actuator = tethered_model.actuator(joint_name)
@@ -154,6 +174,36 @@ def test_tethered_asset_preserves_leg_model_and_adds_passive_arm(
     tethered_model.actuator_trntype == mujoco.mjtTrn.mjTRN_JOINT
   )
   assert arm_joint_id not in tethered_model.actuator_trnid[joint_actuator_ids, 0]
+
+
+def test_slope_leg_actuators_use_60_nm_limit(
+  tethered_slope_model: mujoco.MjModel,
+) -> None:
+  for joint_name in JOINT_NAMES:
+    actuator = tethered_slope_model.actuator(joint_name)
+    assert actuator.gainprm[0] == pytest.approx(100.0)
+    assert actuator.biasprm[1] == pytest.approx(-100.0)
+    assert actuator.biasprm[2] == pytest.approx(-3.0)
+    np.testing.assert_allclose(actuator.forcerange, (-60.0, 60.0))
+
+    joint = tethered_slope_model.joint(joint_name)
+    assert joint.armature[0] == pytest.approx(0.0486)
+
+
+def test_tasks_select_their_own_leg_actuator_variant() -> None:
+  flat_cfg = hexapod_tethered_flat_env_cfg()
+  slope_cfg = hexapod_tethered_slope_env_cfg()
+  mixture_cfg = hexapod_tethered_slope_mixture_env_cfg()
+
+  assert (
+    flat_cfg.scene.entities["robot"].articulation
+    is hexapod_tethered_constants.HEXAPOD_TETHERED_FLAT_ARTICULATION
+  )
+  for cfg in (slope_cfg, mixture_cfg):
+    assert (
+      cfg.scene.entities["robot"].articulation
+      is hexapod_tethered_constants.HEXAPOD_TETHERED_SLOPE_ARTICULATION
+    )
 
 
 def test_flat_cable_actuator_is_effectively_force_free(
@@ -318,26 +368,98 @@ def test_slope_task_keeps_flat_interface_and_adds_playground_rewards() -> None:
   assert stages == [
     {
       "step": 0,
-      "lin_vel_x": (0.05, 0.3),
-      "lin_vel_y": (-0.05, 0.05),
-      "ang_vel_z": (-0.1, 0.1),
-    },
-    {
-      "step": 3000 * 24,
-      "lin_vel_x": (0.0, 0.5),
+      "lin_vel_x": (-0.3, 0.3),
       "lin_vel_y": (-0.2, 0.2),
       "ang_vel_z": (-0.25, 0.25),
     },
     {
-      "step": 6000 * 24,
+      "step": 3000 * 24,
+      "lin_vel_x": (-0.5, 0.5),
+      "lin_vel_y": (-0.3, 0.3),
+      "ang_vel_z": (-0.4, 0.4),
+    },
+    {
+      "step": 7000 * 24,
       "lin_vel_x": (-0.8, 0.8),
       "lin_vel_y": (-0.5, 0.5),
       "ang_vel_z": (-0.8, 0.8),
     },
   ]
+  assert stages == flat_cfg.curriculum["command_vel"].params["velocity_stages"]
+  slope_twist = slope_cfg.commands["twist"]
+  flat_twist = flat_cfg.commands["twist"]
+  assert isinstance(slope_twist, UniformVelocityCommandCfg)
+  assert isinstance(flat_twist, UniformVelocityCommandCfg)
+  assert slope_twist.ranges.lin_vel_x == flat_twist.ranges.lin_vel_x
+  assert slope_twist.ranges.lin_vel_y == flat_twist.ranges.lin_vel_y
+  assert slope_twist.ranges.ang_vel_z == flat_twist.ranges.ang_vel_z
   push = slope_cfg.events["push_robot"]
   assert push.func is events.push_by_setting_velocity_after_step
   assert push.params["start_step"] == 1000 * 24
+
+
+def test_slope_mixture_inherits_slope_task_and_adds_relative_curricula() -> None:
+  slope_cfg = hexapod_tethered_slope_env_cfg()
+  mixture_cfg = hexapod_tethered_slope_mixture_env_cfg()
+
+  assert mixture_cfg.scene.spec_fn is None
+  assert (
+    mixture_cfg.scene.entities["robot"].spec_fn
+    is slope_cfg.scene.entities["robot"].spec_fn
+  )
+  assert tuple(mixture_cfg.actions) == tuple(slope_cfg.actions)
+  assert tuple(mixture_cfg.observations["actor"].terms) == tuple(
+    slope_cfg.observations["actor"].terms
+  )
+  assert tuple(mixture_cfg.observations["critic"].terms) == tuple(
+    slope_cfg.observations["critic"].terms
+  )
+  assert tuple(mixture_cfg.rewards) == tuple(slope_cfg.rewards)
+  for name, term in slope_cfg.rewards.items():
+    assert mixture_cfg.rewards[name].weight == pytest.approx(term.weight), name
+
+  assert next(iter(mixture_cfg.events)) == SLOPE_MIXTURE_EVENT_NAME
+  slope_event = mixture_cfg.events[SLOPE_MIXTURE_EVENT_NAME]
+  assert slope_event.func is events.RandomizeSlopeAngle
+  assert slope_event.params["asset_cfg"].name == "terrain"
+  assert slope_event.params["asset_cfg"].geom_names == ("terrain",)
+  assert slope_event.params["slope_stages"] == [
+    {"step": 0, "angle_range_deg": (20.0, 30.0)},
+    {"step": 6000 * 24, "angle_range_deg": (20.0, 40.0)},
+    {"step": 12000 * 24, "angle_range_deg": (20.0, 50.0)},
+    {"step": 18000 * 24, "angle_range_deg": (20.0, 60.0)},
+  ]
+
+  for event_name in ("reset_base", "tether_anchor"):
+    assert (
+      mixture_cfg.events[event_name].params["slope_event_name"]
+      == SLOPE_MIXTURE_EVENT_NAME
+    )
+  assert (
+    mixture_cfg.terminations["fell_over"].params["slope_event_name"]
+    == SLOPE_MIXTURE_EVENT_NAME
+  )
+  for reward_name in ("tether_eng_steep", "tether_slack_penalty"):
+    assert (
+      mixture_cfg.rewards[reward_name].params["slope_event_name"]
+      == SLOPE_MIXTURE_EVENT_NAME
+    )
+
+  stages = mixture_cfg.curriculum["command_vel"].params["velocity_stages"]
+  assert [stage["step"] for stage in stages] == [0, 3000 * 24, 7000 * 24]
+  assert stages == slope_cfg.curriculum["command_vel"].params["velocity_stages"]
+  assert stages[-1] == {
+    "step": 7000 * 24,
+    "lin_vel_x": (-0.8, 0.8),
+    "lin_vel_y": (-0.5, 0.5),
+    "ang_vel_z": (-0.8, 0.8),
+  }
+
+  play_cfg = hexapod_tethered_slope_mixture_env_cfg(play=True)
+  assert play_cfg.curriculum == {}
+  assert play_cfg.events[SLOPE_MIXTURE_EVENT_NAME].params["slope_stages"] == [
+    {"step": 0, "angle_range_deg": (20.0, 60.0)}
+  ]
 
 
 def test_slope_orientation_termination_uses_surface_normal() -> None:
@@ -771,6 +893,65 @@ def test_runtime_slope_keeps_policy_interface_and_produces_tension(
     tethered_slope_env, "robot/cable_tendonactuatorfrc"
   )
   torch.testing.assert_close(tension, torch.full_like(tension, 200.0))
+
+
+def test_runtime_slope_mixture_uses_per_environment_surface_geometry(
+  tethered_slope_mixture_env: ManagerBasedRlEnv,
+) -> None:
+  env = tethered_slope_mixture_env
+  observations_by_group, _ = env.reset(seed=123)
+  actor_observations = observations_by_group["actor"]
+  critic_observations = observations_by_group["critic"]
+  assert isinstance(actor_observations, torch.Tensor)
+  assert isinstance(critic_observations, torch.Tensor)
+  assert actor_observations.shape == (4, 71)
+  assert critic_observations.shape == (4, 110)
+  assert env.action_manager.action_term_dim == [18, 1]
+
+  slope_term = env.event_manager.get_term_cfg(SLOPE_MIXTURE_EVENT_NAME).func
+  assert isinstance(slope_term, events.RandomizeSlopeAngle)
+  angles = slope_term.slope_angle_rad
+  assert torch.all(angles >= math.radians(20.0))
+  assert torch.all(angles <= math.radians(30.0))
+  assert torch.unique(angles).numel() > 1
+
+  zeros = torch.zeros_like(angles)
+  expected_terrain_quat = quat_from_euler_xyz(zeros, -angles, zeros)
+  terrain: Entity = env.scene["terrain"]
+  terrain_geom_id = terrain.indexing.geom_ids[0]
+  torch.testing.assert_close(
+    env.sim.model.geom_quat[:, terrain_geom_id],
+    expected_terrain_quat,
+    atol=1.0e-6,
+    rtol=0.0,
+  )
+
+  slope_normal = torch.stack(
+    (-torch.sin(angles), zeros, torch.cos(angles)),
+    dim=1,
+  )
+  robot: Entity = env.scene["robot"]
+  body_up = torch.zeros_like(slope_normal)
+  body_up[:, 2] = 1.0
+  torch.testing.assert_close(
+    quat_apply(robot.data.root_link_quat_w, body_up),
+    slope_normal,
+    atol=1.0e-5,
+    rtol=0.0,
+  )
+
+  root_normal_height = torch.sum(robot.data.root_link_pos_w * slope_normal, dim=1)
+  reference_height = 0.313 * math.cos(SLOPE_ANGLE_RAD)
+  assert torch.all(root_normal_height >= reference_height - 1.0e-5)
+  assert torch.all(root_normal_height <= reference_height + 0.01 + 1.0e-5)
+
+  anchor_id = robot.site_names.index(TETHER_ANCHOR_SITE_NAME)
+  anchor_normal_height = torch.sum(
+    robot.data.site_pos_w[:, anchor_id] * slope_normal,
+    dim=1,
+  )
+  assert torch.all(anchor_normal_height >= -1.0e-5)
+  assert torch.all(anchor_normal_height <= 0.3 + 1.0e-5)
 
 
 def test_tethered_pretrained_load_keeps_legs_and_resets_cable(

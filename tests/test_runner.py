@@ -27,8 +27,18 @@ from mjlab.rl.spatial_softmax import SpatialSoftmaxCNNModel
 from mjlab.scene import SceneCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab.tasks.tracking.rl.runner import _OnnxMotionModel
+from mjlab.tasks.velocity.config.hexapod_tethered.rl_cfg import (
+  HexapodTetheredSlopeMixturePpoRunnerCfg,
+  hexapod_tethered_slope_mixture_ppo_runner_cfg,
+)
+from mjlab.tasks.velocity.config.hexapod_tethered.runner import (
+  SLOPE_MIXTURE_CHECKPOINT_KEY,
+  SLOPE_MIXTURE_CHECKPOINT_VERSION,
+  TetheredSlopeMixtureOnPolicyRunner,
+  TetheredVelocityOnPolicyRunner,
+)
 from mjlab.terrains import TerrainEntityCfg
-from mjlab.utils.os import dump_yaml
+from mjlab.utils.os import dump_yaml, get_checkpoint_path
 
 
 @pytest.fixture(scope="module")
@@ -201,6 +211,162 @@ def test_pretrained_load_only_restores_actor_and_resets_progress(env, device) ->
     assert target.alg.optimizer.state == {}
     assert target.current_learning_iteration == 0
     assert wrapped_env.unwrapped.common_step_counter == 0
+
+
+def test_slope_mixture_runner_uses_independent_ppo_configuration() -> None:
+  cfg = hexapod_tethered_slope_mixture_ppo_runner_cfg()
+
+  assert isinstance(cfg, HexapodTetheredSlopeMixturePpoRunnerCfg)
+  assert type(cfg).__bases__ == (RslRlOnPolicyRunnerCfg,)
+  assert cfg.experiment_name == "hexapod_tethered_slope_mixture_velocity"
+  assert cfg.save_interval == 500
+  assert cfg.num_steps_per_env == 24
+  assert cfg.max_iterations == 24_000
+  assert cfg.actor.hidden_dims == (512, 256, 128)
+  assert cfg.critic.hidden_dims == (512, 256, 128)
+  assert cfg.algorithm.learning_rate == pytest.approx(2.0e-4)
+  assert cfg.algorithm.entropy_coef == pytest.approx(0.005)
+  assert cfg.algorithm.desired_kl == pytest.approx(0.008)
+
+
+def test_slope_mixture_first_resume_keeps_ppo_and_resets_curriculum(
+  env,
+  device,
+  tmp_path,
+) -> None:
+  """A fixed-slope resume keeps PPO state but starts mixture stages at zero."""
+  wrapped_env = RslRlVecEnvWrapper(env)
+  source_cfg = hexapod_tethered_slope_mixture_ppo_runner_cfg()
+  source_cfg.algorithm.learning_rate = 3.0e-4
+  source_cfg.upload_model = False
+  source = MjlabOnPolicyRunner(
+    wrapped_env,
+    asdict(source_cfg),
+    log_dir=str(tmp_path / "source"),
+    device=device,
+  )
+  with torch.no_grad():
+    for parameter in source.alg.actor.parameters():
+      parameter.fill_(0.25)
+    for parameter in source.alg.critic.parameters():
+      parameter.fill_(0.75)
+
+  source_parameter = next(source.alg.actor.parameters())
+  source.alg.optimizer.state[source_parameter] = {
+    "step": torch.tensor(7.0),
+    "exp_avg": torch.full_like(source_parameter, 0.125),
+    "exp_avg_sq": torch.full_like(source_parameter, 0.25),
+  }
+  checkpoint = source.alg.save()
+  checkpoint["iter"] = 4321
+  checkpoint["infos"] = {
+    "env_state": {"common_step_counter": 987_654},
+    "source_task": "fixed_slope",
+  }
+  checkpoint_path = tmp_path / "fixed_slope.pt"
+  torch.save(checkpoint, checkpoint_path)
+
+  target_cfg = hexapod_tethered_slope_mixture_ppo_runner_cfg()
+  target_cfg.upload_model = False
+  target = TetheredSlopeMixtureOnPolicyRunner(
+    wrapped_env,
+    asdict(target_cfg),
+    log_dir=str(tmp_path / "target"),
+    device=device,
+  )
+  wrapped_env.unwrapped.common_step_counter = 123
+
+  infos = target.load(str(checkpoint_path), map_location=device)
+
+  assert infos["source_task"] == "fixed_slope"
+  for key, value in source.alg.actor.state_dict().items():
+    torch.testing.assert_close(target.alg.actor.state_dict()[key], value)
+  for key, value in source.alg.critic.state_dict().items():
+    torch.testing.assert_close(target.alg.critic.state_dict()[key], value)
+  target_parameter = next(target.alg.actor.parameters())
+  target_optimizer_state = target.alg.optimizer.state[target_parameter]
+  assert target_optimizer_state["step"].item() == pytest.approx(7.0)
+  torch.testing.assert_close(
+    target_optimizer_state["exp_avg"],
+    torch.full_like(target_parameter, 0.125),
+  )
+  assert target.current_learning_iteration == 4321
+  assert wrapped_env.unwrapped.common_step_counter == 0
+  assert target.alg.learning_rate == pytest.approx(2.0e-4)
+  assert all(
+    group["lr"] == pytest.approx(2.0e-4) for group in target.alg.optimizer.param_groups
+  )
+
+
+def test_slope_mixture_checkpoint_restores_its_curriculum_counter(
+  env,
+  device,
+  tmp_path,
+  monkeypatch,
+) -> None:
+  """Mixture checkpoints carry a marker and retain their relative clock."""
+  wrapped_env = RslRlVecEnvWrapper(env)
+  cfg = hexapod_tethered_slope_mixture_ppo_runner_cfg()
+  cfg.upload_model = False
+
+  def save_without_export(self, path, infos=None):
+    MjlabOnPolicyRunner.save(self, path, infos)
+
+  monkeypatch.setattr(
+    TetheredVelocityOnPolicyRunner,
+    "save",
+    save_without_export,
+  )
+  source = TetheredSlopeMixtureOnPolicyRunner(
+    wrapped_env,
+    asdict(cfg),
+    log_dir=str(tmp_path / "mixture_source"),
+    device=device,
+  )
+  source.current_learning_iteration = 8765
+  source.alg.learning_rate = 7.0e-5
+  for param_group in source.alg.optimizer.param_groups:
+    param_group["lr"] = 7.0e-5
+  wrapped_env.unwrapped.common_step_counter = 144_000
+  checkpoint_path = tmp_path / "mixture.pt"
+  source.save(str(checkpoint_path), infos={"custom": "kept"})
+
+  saved = torch.load(checkpoint_path, map_location=device, weights_only=False)
+  assert saved["infos"]["custom"] == "kept"
+  assert saved["infos"][SLOPE_MIXTURE_CHECKPOINT_KEY] == {
+    "version": SLOPE_MIXTURE_CHECKPOINT_VERSION
+  }
+
+  target = TetheredSlopeMixtureOnPolicyRunner(
+    wrapped_env,
+    asdict(cfg),
+    log_dir=str(tmp_path / "mixture_target"),
+    device=device,
+  )
+  wrapped_env.unwrapped.common_step_counter = 0
+  wrapped_env.unwrapped.episode_length_buf.fill_(7)
+  target.load(str(checkpoint_path), map_location=device)
+
+  assert target.current_learning_iteration == 8765
+  assert wrapped_env.unwrapped.common_step_counter == 144_000
+  assert torch.all(wrapped_env.unwrapped.episode_length_buf == 0)
+  assert target.alg.learning_rate == pytest.approx(7.0e-5)
+  assert all(
+    group["lr"] == pytest.approx(7.0e-5) for group in target.alg.optimizer.param_groups
+  )
+
+
+def test_get_checkpoint_path_accepts_existing_absolute_file(tmp_path) -> None:
+  checkpoint = tmp_path / "fixed_slope" / "model_10000.pt"
+  checkpoint.parent.mkdir()
+  checkpoint.touch()
+
+  resolved = get_checkpoint_path(
+    tmp_path / "missing_mixture_log_root",
+    checkpoint=str(checkpoint),
+  )
+
+  assert resolved == checkpoint.resolve()
 
 
 @pytest.mark.filterwarnings("ignore::DeprecationWarning")

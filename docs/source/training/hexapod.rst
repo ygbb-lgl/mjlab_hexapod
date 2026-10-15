@@ -8,7 +8,7 @@ model's 18-joint order, its XML-default joint pose, a
 ``RM+LF+LB``. The gait clock is internal to the contact-pattern reward and is
 not part of the policy observation.
 
-Three Hexapod tasks are registered:
+Four Hexapod tasks are registered:
 
 ``Mjlab-Velocity-Flat-Hexapod``
    Flat-ground training for the new alternating-tripod gait configuration.
@@ -20,6 +20,11 @@ Three Hexapod tasks are registered:
 ``Mjlab-Velocity-Slope-Hexapod-Tethered``
    The tethered policy interface on a fixed 22-degree plane, with an active
    0--400 N pulling range and four additional slope-specific tether rewards.
+
+``Mjlab-Velocity-Slope-Mixture-Hexapod-Tethered``
+   Continuation training from the fixed-slope policy on independently sampled
+   20--60 degree planes, with a relative slope curriculum and the same policy,
+   reward, and asset interfaces as the fixed-slope task.
 
 Policy interface
 ----------------
@@ -68,9 +73,12 @@ height, air-time, contact, and contact-force privileged observations, then adds
 clean ARM position/velocity and tendon length.
 
 The tethered robot defines its HAA/HFE/KFE motor and PD configurations locally
-in ``hexapod_tethered_constants.py``. They currently use the same ``Kp=100``
-and ``Kd=3`` values as the independent robot, but the configuration objects and
-action-scale mapping are separate so either robot can be tuned independently.
+in ``hexapod_tethered_constants.py``. Flat training limits every leg joint to
+``30 N m``, while fixed-slope and slope-mixture training use a separate
+``60 N m`` articulation. Both variants retain ``Kp=100``, ``Kd=3``, the same
+reflected inertia, velocity limit, action scale, and policy interface. Their
+configuration objects are independent so either variant can be tuned without
+mutating the other; cable-force limits remain defined by the corresponding XML.
 
 Train and inspect
 -----------------
@@ -110,16 +118,45 @@ Train or play the fixed-slope policy with:
      --checkpoint-file \
      logs/rsl_rl/hexapod_tethered_slope_velocity/<run>/model_<iteration>.pt
 
+Continue a trained fixed-slope checkpoint on the slope mixture with native
+resume:
+
+.. code-block:: bash
+
+   uv run train Mjlab-Velocity-Slope-Mixture-Hexapod-Tethered \
+     --env.scene.num-envs 1024 --agent.logger wandb \
+     --agent.run-name tether_slope_mixture_v1 \
+     --agent.resume True \
+     --agent.load-checkpoint \
+     /absolute/path/to/fixed_slope/model_<iteration>.pt
+
+``--agent.load-checkpoint`` accepts an existing absolute file when resume is
+enabled, so the source may live under the fixed-slope experiment while new
+outputs are written under
+``logs/rsl_rl/hexapod_tethered_slope_mixture_velocity``. Do not also pass
+``--agent.pretrained-checkpoint``: mixture continuation restores the actor,
+critic, observation normalizers, optimizer moments, and PPO iteration. On the
+first fixed-slope-to-mixture load, only the environment curriculum counter is
+set to zero and the optimizer learning rate is changed to the mixture value.
+Mixture checkpoints carry a marker, so later mixture-to-mixture resumes retain
+their curriculum counter and adaptive learning rate. ``max_iterations=24000``
+means 24000 additional PPO iterations after the source checkpoint.
+
+``--agent.upload-model False`` is optional and unrelated to loading the local
+checkpoint. Omit it to keep the default W&B model upload, or pass it to log
+metrics without uploading each saved model artifact.
+
 ``--agent.pretrained-checkpoint`` is transfer learning, not resume. The source
 must be a ``Flat-Hexapod-Tethered`` checkpoint with the same 71 observations and
 19 actions. It loads the learned actor and observation statistics, keeps all 18
 leg outputs, and reinitializes the cable output to a mean action of ``0.1`` and
 a standard deviation of ``0.2``. The critic, optimizer, PPO iteration, and
 ``common_step_counter`` start from zero, so the slope command curriculum starts
-at its first stage. Use ``--agent.resume True`` only to continue an interrupted
-slope run; the two options are intentionally mutually exclusive.
+at its first stage. Use ``--agent.resume True`` when the complete PPO state must
+continue, including an interrupted run or the fixed-slope-to-mixture transition;
+the two options are intentionally mutually exclusive.
 
-Both tethered tasks inherit the independent MJLab Hexapod timing: the simulator
+All tethered tasks inherit the independent MJLab Hexapod timing: the simulator
 runs at 200 Hz (``0.005 s``) and the shared policy at 50 Hz (four physics steps
 per policy action). On the flat task, the world-frame tether anchor is sampled
 at every reset from ``x in [-10, 10] m``, ``y in [-5, 5] m``, and
@@ -169,22 +206,52 @@ slack fraction, overload fraction, cable action statistics, and action-limit
 saturation fractions are logged to W&B under ``Metrics/``.
 
 Like the Go1 task, the independent Hexapod task leaves policy actions unclipped
-and saves a checkpoint every 500 iterations. The slope-local command curriculum
-uses its own zeroed ``common_step_counter`` after transfer:
+and saves a checkpoint every 500 iterations. The slope defines an explicit copy
+of the flat command curriculum and uses its own zeroed
+``common_step_counter`` after transfer:
 
-- iteration 0: ``vx=[0.05, 0.3]``, ``vy=[-0.05, 0.05]``,
-  ``yaw=[-0.1, 0.1]``;
-- iteration 3000: ``vx=[0.0, 0.5]``, ``vy=[-0.2, 0.2]``,
-  ``yaw=[-0.25, 0.25]``; and
-- iteration 6000: ``vx=[-0.8, 0.8]``, ``vy=[-0.5, 0.5]``,
+- iteration 0: ``vx=[-0.3, 0.3]``, ``vy=[-0.2, 0.2]``,
+  ``yaw=[-0.25, 0.25]``;
+- iteration 3000: ``vx=[-0.5, 0.5]``, ``vy=[-0.3, 0.3]``,
+  ``yaw=[-0.4, 0.4]``; and
+- iteration 7000: ``vx=[-0.8, 0.8]``, ``vy=[-0.5, 0.5]``,
   ``yaw=[-0.8, 0.8]``.
 
 The slope PPO learning rate is ``3e-4``. Random velocity pushes are suppressed
 for the first 1000 iterations and then use the standard Hexapod disturbance
 range. At reset, initial yaw is limited to ``[-0.15, 0.15] rad`` around world
-``+X`` so the first forward-only curriculum stage actually points uphill toward
-the anchor. Fall termination compares trunk up with the 22-degree surface
-normal, not world vertical.
+``+X``, so positive body-X commands point uphill toward the anchor while the
+symmetric negative commands train downhill motion. Fall termination compares
+trunk up with the 22-degree surface normal, not world vertical.
+
+The slope-mixture task reuses the fixed-slope XML and its 0--400 N cable; it
+does not introduce another robot model. At each episode reset it gives every
+parallel environment its own plane quaternion about world ``Y``. Positive
+angles make world ``+X`` uphill. The plane is sampled once per episode and does
+not rotate underneath the robot. Root pose and anchor height are rebuilt from
+that environment's angle while preserving the fixed-slope model's nominal
+terrain-normal clearance.
+
+The relative mixture slope curriculum is:
+
+- iterations 0--5999: 20--30 degrees;
+- iterations 6000--11999: 20--40 degrees;
+- iterations 12000--17999: 20--50 degrees; and
+- iterations 18000--23999: 20--60 degrees.
+
+The angle used by ``upright``, foot clearance, swing height, foot slip,
+``tether_eng_steep``, ``tether_slack_penalty``, and fall termination is the
+actual per-environment plane angle or normal. All reward weights remain exactly
+the fixed-slope weights. W&B logs the sampled slope mean/min/max and the
+slope-dependent target tension.
+
+The command curriculum is deliberately not restarted at every 6000-iteration
+slope boundary. Mixture owns an explicit copy of the same velocity curriculum
+as flat and fixed slope at relative iterations 0, 3000, and 7000. It reaches
+``vx=[-0.8, 0.8]``, ``vy=[-0.5, 0.5]``, and ``yaw=[-0.8, 0.8]`` once and then
+keeps those ranges while the slope distribution continues expanding. The
+mixture PPO configuration is independent of the fixed-slope class and uses
+``learning_rate=2e-4``, ``entropy_coef=0.005``, and ``desired_kl=0.008``.
 
 Every saved checkpoint also produces an ONNX policy in the run directory. Its
 metadata records joint order, default pose, action scale, and observation layout.

@@ -89,20 +89,39 @@ HAA_GEAR_RATIO = 18
 HFE_GEAR_RATIO = 18
 KFE_GEAR_RATIO = 18
 
-HAA_ACTUATOR = ElectricActuator(
+FLAT_LEG_EFFORT_LIMIT = 30.0
+SLOPE_LEG_EFFORT_LIMIT = 60.0
+
+FLAT_HAA_ACTUATOR = ElectricActuator(
   reflected_inertia=reflected_inertia(ROTOR_INERTIA, HAA_GEAR_RATIO),
   velocity_limit=16.44,
-  effort_limit=30.0,
+  effort_limit=FLAT_LEG_EFFORT_LIMIT,
 )
-HFE_ACTUATOR = ElectricActuator(
+FLAT_HFE_ACTUATOR = ElectricActuator(
   reflected_inertia=reflected_inertia(ROTOR_INERTIA, HFE_GEAR_RATIO),
   velocity_limit=16.44,
-  effort_limit=30.0,
+  effort_limit=FLAT_LEG_EFFORT_LIMIT,
 )
-KFE_ACTUATOR = ElectricActuator(
+FLAT_KFE_ACTUATOR = ElectricActuator(
   reflected_inertia=reflected_inertia(ROTOR_INERTIA, KFE_GEAR_RATIO),
   velocity_limit=16.44,
-  effort_limit=30.0,
+  effort_limit=FLAT_LEG_EFFORT_LIMIT,
+)
+
+SLOPE_HAA_ACTUATOR = ElectricActuator(
+  reflected_inertia=reflected_inertia(ROTOR_INERTIA, HAA_GEAR_RATIO),
+  velocity_limit=16.44,
+  effort_limit=SLOPE_LEG_EFFORT_LIMIT,
+)
+SLOPE_HFE_ACTUATOR = ElectricActuator(
+  reflected_inertia=reflected_inertia(ROTOR_INERTIA, HFE_GEAR_RATIO),
+  velocity_limit=16.44,
+  effort_limit=SLOPE_LEG_EFFORT_LIMIT,
+)
+SLOPE_KFE_ACTUATOR = ElectricActuator(
+  reflected_inertia=reflected_inertia(ROTOR_INERTIA, KFE_GEAR_RATIO),
+  velocity_limit=16.44,
+  effort_limit=SLOPE_LEG_EFFORT_LIMIT,
 )
 
 STIFFNESS_HAA = 100.0
@@ -112,27 +131,51 @@ DAMPING_HFE = 3.0
 STIFFNESS_KFE = 100.0
 DAMPING_KFE = 3.0
 
-HEXAPOD_TETHERED_HAA_ACTUATOR_CFG = BuiltinPositionActuatorCfg(
-  target_names_expr=(r".*_HAA",),
-  stiffness=STIFFNESS_HAA,
-  damping=DAMPING_HAA,
-  effort_limit=HAA_ACTUATOR.effort_limit,
-  armature=HAA_ACTUATOR.reflected_inertia,
+
+def _position_actuator_cfg(
+  joint_suffix: str,
+  stiffness: float,
+  damping: float,
+  actuator: ElectricActuator,
+) -> BuiltinPositionActuatorCfg:
+  """Create one independently owned leg position-actuator config."""
+  return BuiltinPositionActuatorCfg(
+    target_names_expr=(rf".*_{joint_suffix}",),
+    stiffness=stiffness,
+    damping=damping,
+    effort_limit=actuator.effort_limit,
+    armature=actuator.reflected_inertia,
+  )
+
+
+HEXAPOD_TETHERED_FLAT_HAA_ACTUATOR_CFG = _position_actuator_cfg(
+  "HAA", STIFFNESS_HAA, DAMPING_HAA, FLAT_HAA_ACTUATOR
 )
-HEXAPOD_TETHERED_HFE_ACTUATOR_CFG = BuiltinPositionActuatorCfg(
-  target_names_expr=(r".*_HFE",),
-  stiffness=STIFFNESS_HFE,
-  damping=DAMPING_HFE,
-  effort_limit=HFE_ACTUATOR.effort_limit,
-  armature=HFE_ACTUATOR.reflected_inertia,
+HEXAPOD_TETHERED_FLAT_HFE_ACTUATOR_CFG = _position_actuator_cfg(
+  "HFE", STIFFNESS_HFE, DAMPING_HFE, FLAT_HFE_ACTUATOR
 )
-HEXAPOD_TETHERED_KFE_ACTUATOR_CFG = BuiltinPositionActuatorCfg(
-  target_names_expr=(r".*_KFE",),
-  stiffness=STIFFNESS_KFE,
-  damping=DAMPING_KFE,
-  effort_limit=KFE_ACTUATOR.effort_limit,
-  armature=KFE_ACTUATOR.reflected_inertia,
+HEXAPOD_TETHERED_FLAT_KFE_ACTUATOR_CFG = _position_actuator_cfg(
+  "KFE", STIFFNESS_KFE, DAMPING_KFE, FLAT_KFE_ACTUATOR
 )
+
+HEXAPOD_TETHERED_SLOPE_HAA_ACTUATOR_CFG = _position_actuator_cfg(
+  "HAA", STIFFNESS_HAA, DAMPING_HAA, SLOPE_HAA_ACTUATOR
+)
+HEXAPOD_TETHERED_SLOPE_HFE_ACTUATOR_CFG = _position_actuator_cfg(
+  "HFE", STIFFNESS_HFE, DAMPING_HFE, SLOPE_HFE_ACTUATOR
+)
+HEXAPOD_TETHERED_SLOPE_KFE_ACTUATOR_CFG = _position_actuator_cfg(
+  "KFE", STIFFNESS_KFE, DAMPING_KFE, SLOPE_KFE_ACTUATOR
+)
+
+# Backwards-compatible flat aliases. New code should use the variant-qualified
+# names above so changing one task cannot silently change the other.
+HAA_ACTUATOR = FLAT_HAA_ACTUATOR
+HFE_ACTUATOR = FLAT_HFE_ACTUATOR
+KFE_ACTUATOR = FLAT_KFE_ACTUATOR
+HEXAPOD_TETHERED_HAA_ACTUATOR_CFG = HEXAPOD_TETHERED_FLAT_HAA_ACTUATOR_CFG
+HEXAPOD_TETHERED_HFE_ACTUATOR_CFG = HEXAPOD_TETHERED_FLAT_HFE_ACTUATOR_CFG
+HEXAPOD_TETHERED_KFE_ACTUATOR_CFG = HEXAPOD_TETHERED_FLAT_KFE_ACTUATOR_CFG
 
 
 INIT_STATE = EntityCfg.InitialStateCfg(
@@ -148,21 +191,41 @@ SLOPE_INIT_STATE = EntityCfg.InitialStateCfg(
   joint_vel={r".*": 0.0},
 )
 
+
+def _tether_actuator_cfg() -> XmlActuatorCfg:
+  """Create a fresh wrapper for the XML-defined cable actuator."""
+  return XmlActuatorCfg(
+    target_names_expr=(TETHER_TENDON_NAME,),
+    transmission_type=TransmissionType.TENDON,
+    command_field="effort",
+  )
+
+
 # The XML-defined cable actuator stays in XML so its -200 N/control gain remains
-# the single source of truth.
-HEXAPOD_TETHERED_ARTICULATION = EntityArticulationInfoCfg(
+# the single source of truth. Flat and slope own fully independent Python
+# actuator configs; the slope articulation is also used by slope-mixture.
+HEXAPOD_TETHERED_FLAT_ARTICULATION = EntityArticulationInfoCfg(
   actuators=(
-    HEXAPOD_TETHERED_HAA_ACTUATOR_CFG,
-    HEXAPOD_TETHERED_HFE_ACTUATOR_CFG,
-    HEXAPOD_TETHERED_KFE_ACTUATOR_CFG,
-    XmlActuatorCfg(
-      target_names_expr=(TETHER_TENDON_NAME,),
-      transmission_type=TransmissionType.TENDON,
-      command_field="effort",
-    ),
+    HEXAPOD_TETHERED_FLAT_HAA_ACTUATOR_CFG,
+    HEXAPOD_TETHERED_FLAT_HFE_ACTUATOR_CFG,
+    HEXAPOD_TETHERED_FLAT_KFE_ACTUATOR_CFG,
+    _tether_actuator_cfg(),
   ),
   soft_joint_pos_limit_factor=0.9,
 )
+
+HEXAPOD_TETHERED_SLOPE_ARTICULATION = EntityArticulationInfoCfg(
+  actuators=(
+    HEXAPOD_TETHERED_SLOPE_HAA_ACTUATOR_CFG,
+    HEXAPOD_TETHERED_SLOPE_HFE_ACTUATOR_CFG,
+    HEXAPOD_TETHERED_SLOPE_KFE_ACTUATOR_CFG,
+    _tether_actuator_cfg(),
+  ),
+  soft_joint_pos_limit_factor=0.9,
+)
+
+# Preserve the old public name as a flat-task alias.
+HEXAPOD_TETHERED_ARTICULATION = HEXAPOD_TETHERED_FLAT_ARTICULATION
 
 
 def get_hexapod_tethered_robot_cfg() -> EntityCfg:
@@ -171,7 +234,7 @@ def get_hexapod_tethered_robot_cfg() -> EntityCfg:
     init_state=INIT_STATE,
     collisions=(FULL_COLLISION,),
     spec_fn=get_spec,
-    articulation=HEXAPOD_TETHERED_ARTICULATION,
+    articulation=HEXAPOD_TETHERED_FLAT_ARTICULATION,
   )
 
 
@@ -181,7 +244,7 @@ def get_hexapod_tethered_slope_robot_cfg() -> EntityCfg:
     init_state=SLOPE_INIT_STATE,
     collisions=(FULL_COLLISION,),
     spec_fn=get_slope_spec,
-    articulation=HEXAPOD_TETHERED_ARTICULATION,
+    articulation=HEXAPOD_TETHERED_SLOPE_ARTICULATION,
   )
 
 
@@ -196,8 +259,11 @@ __all__ = [
   "ARM_JOINT_NAME",
   "FOOT_GEOM_NAMES",
   "FOOT_SITE_NAMES",
+  "FLAT_LEG_EFFORT_LIMIT",
   "HEXAPOD_TETHERED_ACTION_SCALE",
   "HEXAPOD_TETHERED_ARTICULATION",
+  "HEXAPOD_TETHERED_FLAT_ARTICULATION",
+  "HEXAPOD_TETHERED_SLOPE_ARTICULATION",
   "HEXAPOD_TETHERED_SLOPE_XML",
   "HEXAPOD_TETHERED_XML",
   "INIT_JOINT_POS",
@@ -206,6 +272,7 @@ __all__ = [
   "LEG_NAMES",
   "SLOPE_ANGLE_DEG",
   "SLOPE_ANGLE_RAD",
+  "SLOPE_LEG_EFFORT_LIMIT",
   "SLOPE_PITCH_RAD",
   "SLOPE_ROOT_QUAT",
   "TETHER_ANCHOR_SITE_NAME",
